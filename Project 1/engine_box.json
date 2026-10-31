@@ -1,0 +1,16 @@
+{
+  "parameters": {
+    "N": 100000,
+    "L": 1e-06,
+    "T": 3000.0,
+    "hole_area_fraction": 0.25,
+    "tau": 2e-09,
+    "n_steps": 2000,
+    "burn_in": 5e-10,
+    "refill": "inlet",
+    "seed": 2000
+  },
+  "thrust_per_box": 5.759420593705208e-10,
+  "mass_loss_rate_per_box": 1.3165957323123082e-13,
+  "exhaust_speed": 4374.479160425398
+}
