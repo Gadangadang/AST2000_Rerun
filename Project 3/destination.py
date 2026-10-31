@@ -34,7 +34,7 @@ import ast2000tools.constants as const
 import matplotlib.pyplot as plt
 import numpy as np
 
-from common.config import get_mission
+from common.config import DESTINATION, SEED, get_mission
 from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, PLANET_COLORS, save
 from habitable_zone import Star, T_WATER, habitable_zone, planet_table
 from orbits import G, analytic_orbit, kepler_state
@@ -68,6 +68,20 @@ def next_window(system, target, transfer_time, t_max=40.0, dt=1e-3):
     miss = np.angle(np.exp(1j * (angle[target] - angle[HOME] - needed)))  # Wrapped to (-pi, pi]
     crossing = np.where((np.sign(miss[:-1]) != np.sign(miss[1:])) & (np.abs(miss[:-1]) < 1))[0]
     return t[crossing[0]] if len(crossing) else np.nan
+
+
+def choose_destination(rows):
+    """Our rule from Part 3: rocky, habitable if possible, then the smallest delta-v."""
+    rocky = [r for r in rows if r["type"] == "rock"] or rows
+    habitable = [r for r in rocky if r["habitable"]] or rocky
+    return min(habitable, key=lambda r: r["dv"])["planet"]
+
+
+def get_destination(system):
+    """The destination planet: chosen by hand for this seed (common.config), otherwise by our rule."""
+    if DESTINATION is not None:
+        return DESTINATION
+    return choose_destination(candidates(system, Star(system)))
 
 
 def capture_distance(system, planet, r_star, k=K_DOMINANT):
@@ -224,6 +238,11 @@ def main():
     for r in sorted(rows, key=lambda r: r["a"]):
         print(f"      planet {r['planet']}: captured within {r['capture_km']:,.0f} km, "
               f"visible within {r['resolve_km']:,.0f} km (radius {r['radius_km']:,.0f} km)")
+    auto = choose_destination(rows)
+    chosen = DESTINATION if DESTINATION is not None else auto
+    print(f"2     destination: planet {chosen} " + ("(chosen by hand for seed %d; our rule also picks %d)" % (SEED, auto)
+                                                    if DESTINATION is not None else "(picked by our rule: rocky, "
+                                                    "habitable if possible, cheapest)"))
     plot_comparison(system, star, rows)
     plot_transfers(system, rows)
     plot_closeness(rows)

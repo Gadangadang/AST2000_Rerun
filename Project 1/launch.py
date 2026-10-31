@@ -53,6 +53,7 @@ from rocket import fuel_consumed, load_engine_box
 # longest launch physically possible is ~6.25 min (thrust/weight -> 1 at liftoff); see e_design_space.png.
 # A higher engine temperature allows longer launches and less fuel.
 TARGET_DURATION = 6 * 60  # [s]
+FALLBACK_DURATION = 315.0  # Used when the home planet is too heavy for TARGET_DURATION (other seeds) [s]
 # Fuel left in the tank after launch, for the journey [kg]. Chosen in Part 3 for planet 1: the Hohmann
 # transfer needs ~7.4 km/s and going into orbit ~2 km/s more. 10 000 kg with u = 4.4 km/s and the 1100 kg
 # spacecraft gives u ln((1100 + 10000) / 1100) = 10.1 km/s.
@@ -161,6 +162,12 @@ def design_engine(thrust_box, mdot_box, spacecraft_mass, planet, target=TARGET_D
     crossing = np.nonzero((errors[:-1] > 0) & (errors[1:] <= 0) & (errors[:-1] < 1e8))[0]
     if len(crossing) == 0:
         longest = np.max(errors[errors < 1e8]) + target
+        # A heavier planet (another seed) may not allow the 6 min target. A shorter launch is fine, and even
+        # cheaper; keep a margin above the API's 5 min minimum (its Euler steps end ~1 s differently).
+        if target > FALLBACK_DURATION and longest > FALLBACK_DURATION + 5:
+            print(f"E     a {target:.0f} s launch is impossible here (longest possible {longest:.0f} s); "
+                  f"aiming for {FALLBACK_DURATION:.0f} s instead")
+            return design_engine(thrust_box, mdot_box, spacecraft_mass, planet, FALLBACK_DURATION, reserve)
         raise RuntimeError(f"a {target:.0f} s launch is impossible with u = {u:.0f} m/s "
                            f"(the longest possible is {longest:.0f} s); raise the engine temperature")
     i = crossing[0]
