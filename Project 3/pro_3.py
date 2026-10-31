@@ -20,10 +20,8 @@ import time
 import destination
 import generalised_launch
 import habitable_zone
+from common.runner import banner
 
-
-def banner(text):
-    print("\n" + "=" * 78 + f"\n  {text}\n" + "=" * 78)
 
 
 def main():

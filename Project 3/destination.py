@@ -26,9 +26,10 @@ Figures go to figures/2*.png and figures/4*.png.
 import os
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, ".."))  # Repo root, for common/
-sys.path.insert(0, os.path.join(HERE, "..", "Project 2"))  # Orbits from Part 2
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))  # Repo root, for common/
+from common.paths import use_parts
+
+use_parts(2)
 
 import ast2000tools.constants as const
 import matplotlib.pyplot as plt
@@ -41,8 +42,8 @@ from orbits import G, analytic_orbit, kepler_state
 
 HOME = 0
 K_DOMINANT = 10  # Planet's pull / star's pull that counts as "arrived" (challenge 4)
-# Camera for challenge 5. ASSUMED values until Part 4 gives the real camera.
-CAMERA_PIXELS = 640
+# Camera for challenge 5: P ~ 1000 pixels and F = 70 deg, as the Part 5 assignment states
+CAMERA_PIXELS = 1000
 CAMERA_FOV = np.radians(70)
 AU_PER_YR = const.AU / const.yr  # [m/s] per [AU/yr]
 
@@ -55,19 +56,21 @@ def hohmann(GM, r1, r2):
     return dv1, dv2, np.pi * np.sqrt(a_t ** 3 / GM)
 
 
-def next_window(system, target, transfer_time, t_max=40.0, dt=1e-3):
+def next_windows(system, transfer_times, t_max=40.0, dt=1e-3):
     """
-    First time > 0 when the target leads home by the Hohmann angle pi - n_target t_transfer,
-    so that it arrives where the spacecraft does. Uses the exact orbits.
+    For every planet: the first time > 0 when it leads home by the Hohmann angle
+    pi - n_planet t_transfer, so that it arrives where the spacecraft does.
+    One Kepler solve for all planets and times; NaN if there is no window before t_max.
     """
     t = np.arange(0, t_max, dt)
     pos, _ = kepler_state(system, t)
-    angle = np.arctan2(pos[1], pos[0])
-    n_target = 2 * np.pi / np.sqrt(system.semi_major_axes[target] ** 3 / (G * system.star_mass))
-    needed = np.pi - n_target * transfer_time
-    miss = np.angle(np.exp(1j * (angle[target] - angle[HOME] - needed)))  # Wrapped to (-pi, pi]
-    crossing = np.where((np.sign(miss[:-1]) != np.sign(miss[1:])) & (np.abs(miss[:-1]) < 1))[0]
-    return t[crossing[0]] if len(crossing) else np.nan
+    angle = np.arctan2(pos[1], pos[0])  # (n_planets, n_t)
+    n = 2 * np.pi / np.sqrt(system.semi_major_axes ** 3 / (G * system.star_mass))  # Mean motions
+    needed = np.pi - n * np.asarray(transfer_times)
+    miss = np.angle(np.exp(1j * (angle - angle[HOME] - needed[:, None])))  # Wrapped to (-pi, pi]
+    crossing = (np.sign(miss[:, :-1]) != np.sign(miss[:, 1:])) & (np.abs(miss[:, :-1]) < 1)
+    first = np.argmax(crossing, axis=1)
+    return np.where(crossing.any(axis=1), t[first], np.nan)
 
 
 def choose_destination(rows):
@@ -95,31 +98,28 @@ def resolve_distance(radius, pixels=CAMERA_PIXELS, fov=CAMERA_FOV):
 
 
 def candidates(system, star):
-    """All the numbers for every planet except home."""
+    """All the numbers for every planet except home (computed for all planets at once)."""
     table = planet_table(system, star)
     GM = G * system.star_mass
     hz = habitable_zone(star)
-    rows = []
-    for p in range(system.number_of_planets):
-        if p == HOME:
-            continue
-        M = system.masses[p] * const.m_sun
-        R = system.radii[p] * 1e3
-        dv1, dv2, t_transfer = hohmann(GM, system.semi_major_axes[HOME], system.semi_major_axes[p])
-        P_home, P_target = (2 * np.pi * np.sqrt(system.semi_major_axes[[HOME, p]] ** 3 / GM))
-        rows.append({
-            "planet": p, "type": system.types[p], "a": system.semi_major_axes[p],
-            "T": table["T"][p], "habitable": hz[0] <= system.semi_major_axes[p] <= hz[1],
-            "panel": table["panel"][p],
-            "radius_km": system.radii[p], "g": const.G * M / R ** 2, "v_esc": np.sqrt(2 * const.G * M / R),
-            "rho_atm": system.atmospheric_densities[p], "day_h": system.rotational_periods[p] * 24,
-            "dv": (dv1 + dv2) * AU_PER_YR, "dv1": dv1 * AU_PER_YR, "dv2": dv2 * AU_PER_YR,
-            "transfer_yr": t_transfer, "synodic_yr": 1 / abs(1 / P_home - 1 / P_target),
-            "window_yr": next_window(system, p, t_transfer),
-            "capture_km": capture_distance(system, p, system.semi_major_axes[p]) * const.AU / 1e3,
-            "resolve_km": resolve_distance(system.radii[p]),
-        })
-    return rows
+    a = system.semi_major_axes
+    M, R = system.masses * const.m_sun, system.radii * 1e3
+    dv1, dv2, t_transfer = hohmann(GM, a[HOME], a)
+    P = 2 * np.pi * np.sqrt(a ** 3 / GM)
+    with np.errstate(divide="ignore"):
+        synodic = 1 / np.abs(1 / P[HOME] - 1 / P)
+    columns = {
+        "planet": np.arange(system.number_of_planets), "type": np.array(system.types), "a": a,
+        "T": table["T"], "habitable": (hz[0] <= a) & (a <= hz[1]), "panel": table["panel"],
+        "radius_km": system.radii, "g": const.G * M / R ** 2, "v_esc": np.sqrt(2 * const.G * M / R),
+        "rho_atm": system.atmospheric_densities, "day_h": system.rotational_periods * 24,
+        "dv": (dv1 + dv2) * AU_PER_YR, "dv1": dv1 * AU_PER_YR, "dv2": dv2 * AU_PER_YR,
+        "transfer_yr": t_transfer, "synodic_yr": synodic, "window_yr": next_windows(system, t_transfer),
+        "capture_km": capture_distance(system, np.arange(system.number_of_planets), a) * const.AU / 1e3,
+        "resolve_km": resolve_distance(system.radii),
+    }
+    return [{key: value[p].item() if hasattr(value[p], "item") else value[p] for key, value in columns.items()}
+            for p in range(system.number_of_planets) if p != HOME]
 
 
 # ===================================================================== figures
@@ -209,7 +209,7 @@ def plot_closeness(rows):
     ax.plot([], [], "o", color=MUTED, ms=9, label=f"4: planet pulls {K_DOMINANT}x harder than the star inside this "
                                                  r"distance, $l = |r|\sqrt{M_p / kM_\star}$")
     ax.plot([], [], "s", color=MUTED, ms=9, label=f"5: planet bigger than one pixel inside this distance, $L = 2RP/F$ "
-                                                 f"(assumed {CAMERA_PIXELS} px, {np.degrees(CAMERA_FOV):.0f}$^\\circ$)")
+                                                 f"({CAMERA_PIXELS} px, {np.degrees(CAMERA_FOV):.0f}$^\\circ$)")
     ax.plot([], [], color=INK, lw=2, label="planet radius")
     ax.set_xticks(x)
     ax.set_xticklabels([f"{r['planet']}\n{r['type']}" for r in rows])
@@ -234,7 +234,7 @@ def main():
               f"{r['dv'] / 1e3:6.2f}  {r['transfer_yr'] * 365.25:6.0f}  {r['synodic_yr']:5.2f} yr "
               f"{r['window_yr']:5.2f} yr {r['panel']:7.2f}")
     print(f"4+5   capture distance (k = {K_DOMINANT}) and camera distance "
-          f"(ASSUMED {CAMERA_PIXELS} px, {np.degrees(CAMERA_FOV):.0f} deg field of view):")
+          f"({CAMERA_PIXELS} px, {np.degrees(CAMERA_FOV):.0f} deg field of view):")
     for r in sorted(rows, key=lambda r: r["a"]):
         print(f"      planet {r['planet']}: captured within {r['capture_km']:,.0f} km, "
               f"visible within {r['resolve_km']:,.0f} km (radius {r['radius_km']:,.0f} km)")

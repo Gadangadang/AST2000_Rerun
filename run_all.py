@@ -10,7 +10,8 @@ The whole AST2000 project in one go: every part that is done so far, in order.
 Each part runs in its own folder (pro_N.py), so its figures land in "Project N/figures".
 A new seed overwrites the generated files (figures, missions, orbits), which are all
 regenerated here anyway. Each part feeds the next: the launch (1) is reused by the
-orbits and launch windows (2, 3), and the launched mission by the orientation (4).
+orbits and launch windows (2, 3), the launched mission by the orientation (4), and
+all of them by the journey (5), which leaves the spacecraft in orbit for Part 6.
 """
 import argparse
 import os
@@ -24,6 +25,7 @@ PARTS = {  # part -> (folder, script, extra arguments in --quick mode)
     2: ("Project 2", "pro_2.py", ["--quick"]),
     3: ("Project 3", "pro_3.py", []),
     4: ("Project 4", "pro_4.py", []),
+    5: ("Project 5", "pro_5.py", []),
 }
 
 

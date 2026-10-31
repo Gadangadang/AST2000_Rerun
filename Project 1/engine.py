@@ -42,7 +42,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from ast2000tools.constants import k_B, m_H2
-from gas_box import analytical, initial_state
+from gas_box import analytical, initial_state, mirror, move
 from part_a_statistics import sample_velocities, sigma_v
 from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, VIOLET, save
 
@@ -76,7 +76,7 @@ def ideal_engine(N=N, L=L, T=T, hole_area_fraction=HOLE_AREA_FRACTION, m=m_H2):
 
 def refill(positions, velocities, escaped, method, L, T, hole_half_side, dt, rng):
     """Put the escaped particles back into the box according to `method` (see module docstring)."""
-    k = np.count_nonzero(escaped)
+    k = len(escaped)  # Row indices of the escaped particles
     if k == 0:
         return
     if method == "closed":
@@ -121,38 +121,31 @@ def simulate_engine(N=N, L=L, T=T, hole_area_fraction=HOLE_AREA_FRACTION, tau=TA
     momentum_out = np.zeros(n_steps)
     temperature = np.zeros(n_steps)
     escaped_vx = []
+    # Bounces don't change |v|^2, so the kinetic energy only changes when particles are replaced:
+    # keep a running sum instead of summing over all particles every step.
+    sum_v2 = np.sum(velocities ** 2)
 
     for i in range(n_steps):
-        positions += velocities * dt  # Free motion between collisions (exact)
+        rows = move(positions, velocities, dt, L)  # Free motion between collisions (exact)
+        mirror(positions, velocities, rows, L, axes=(1, 2))  # y and z walls first, so y and z are inside
 
-        # y and z walls first, so y and z are inside the box when we check the hole
-        for axis in (1, 2):
-            below = positions[:, axis] < 0
-            above = positions[:, axis] > L
-            positions[below, axis] *= -1
-            positions[above, axis] = 2 * L - positions[above, axis]
-            velocities[below | above, axis] *= -1
+        # x = 0 is a solid wall; at x = L, particles inside the hole escape and the rest bounce
+        p = positions[rows]
+        through_x_L = p[:, 0] > L
+        in_hole = through_x_L & np.all(np.abs(p[:, 1:] - L / 2) <= hole_half_side, axis=1)
+        escaped = rows[in_hole]
+        mirror(positions, velocities, rows[~in_hole], L, axes=(0,))
 
-        # x = 0 is a solid wall
-        below = positions[:, 0] < 0
-        positions[below, 0] *= -1
-        velocities[below, 0] *= -1
-
-        # x = L: through the hole, or bounce off the wall around it
-        above = positions[:, 0] > L
-        in_hole = above & (np.abs(positions[:, 1] - L / 2) <= hole_half_side) \
-                        & (np.abs(positions[:, 2] - L / 2) <= hole_half_side)
-        wall = above & ~in_hole
-        positions[wall, 0] = 2 * L - positions[wall, 0]
-        velocities[wall, 0] *= -1
-
-        escapes[i] = np.count_nonzero(in_hole)
-        momentum_out[i] = m_H2 * np.sum(velocities[in_hole, 0])
+        vx_out = velocities[escaped, 0]
+        escapes[i] = len(escaped)
+        momentum_out[i] = m_H2 * np.sum(vx_out)
         if keep_escaped:
-            escaped_vx.append(velocities[in_hole, 0].copy())
-        refill(positions, velocities, in_hole, refill_method, L, T, hole_half_side, dt, rng)
+            escaped_vx.append(vx_out.copy())
+        sum_v2 -= np.sum(velocities[escaped] ** 2)
+        refill(positions, velocities, escaped, refill_method, L, T, hole_half_side, dt, rng)
+        sum_v2 += np.sum(velocities[escaped] ** 2)
 
-        temperature[i] = m_H2 * np.mean(np.sum(velocities ** 2, axis=1)) / (3 * k_B)
+        temperature[i] = m_H2 * sum_v2 / N / (3 * k_B)
 
     return {
         "N": N, "L": L, "T": T, "tau": tau, "n_steps": n_steps, "dt": dt, "refill": refill_method,

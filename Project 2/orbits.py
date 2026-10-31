@@ -38,6 +38,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from common.config import SSVIEW_DATA_DIR, TRAJECTORY_FILE, XML_DIR, get_mission
+from common.integrators import leapfrog
 from common.plot_style import INK, MUTED, PLANET_COLORS, save
 
 G = const.G_sol  # = 4 pi^2 [AU^3 yr^-2 Msun^-1]
@@ -122,22 +123,9 @@ def simulate_orbits(system, duration, steps_per_year=STEPS_PER_YEAR, save_every=
         a = -GM * x / r ** 3
         return a if c is None else a * (1 + gr / r ** 2)
 
-    times = np.linspace(0, duration, n_out + 1)
-    positions = np.zeros((n_out + 1, *x.shape))
-    velocities = np.zeros_like(positions)
-    positions[0], velocities[0] = x, v
-
-    a = acceleration(x)
-    for i in range(1, n_out + 1):
-        for _ in range(save_every):
-            v += 0.5 * dt * a
-            x += dt * v
-            a = acceleration(x)
-            v += 0.5 * dt * a
-        positions[i], velocities[i] = x, v
-
+    positions, velocities = leapfrog(acceleration, x, v, dt, n_out, save_every)
     # (n_out, n_planets, 2) -> (2, n_planets, n_out), the layout ast2000tools uses
-    return times, positions.transpose(2, 1, 0), velocities.transpose(2, 1, 0)
+    return np.linspace(0, duration, n_out + 1), positions.transpose(2, 1, 0), velocities.transpose(2, 1, 0)
 
 
 def relative_deviation(positions, exact):

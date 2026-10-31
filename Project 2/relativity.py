@@ -47,6 +47,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from common.config import get_mission
+from common.integrators import leapfrog
 from common.plot_style import BLUE, INK, MUTED, ORANGE, PLANET_COLORS, save
 from orbits import G, N_HOME_ORBITS, STEPS_PER_YEAR, kepler_positions, relative_deviation, simulate_orbits
 from star_wobble import simulate_nbody, star_and_planets
@@ -65,33 +66,22 @@ def precession_per_orbit(GM, a, e, c=C):
     return 6 * np.pi * GM / (c ** 2 * a * (1 - e ** 2))
 
 
-def leapfrog(GM, gr, x0, v0, dt, n_steps, save_every=SAVE_EVERY):
+def leapfrog_central(GM, gr, x0, v0, dt, n_steps, save_every=SAVE_EVERY):
     """
-    Kick-drift-kick for independent bodies around fixed stars, one body per row.
+    Leapfrog (common.integrators) for independent bodies around fixed stars, one body per row.
 
     GM, gr = 3 h^2 / c^2 (0 for Newton) and dt are per row, so bodies with very
     different periods can all do the same number of steps per orbit.
     x0, v0 (n, 2). Returns positions and velocities (2, n, n_out).
     """
     GM, gr, dt = (np.asarray(q, dtype=float)[:, None] for q in (GM, gr, dt))
-    x, v = x0.astype(float).copy(), v0.astype(float).copy()
+    x, v = x0, v0
 
     def acceleration(x):
         r2 = np.sum(x ** 2, axis=1, keepdims=True)
         return -GM * x / r2 ** 1.5 * (1 + gr / r2)
 
-    n_out = n_steps // save_every
-    positions = np.zeros((n_out + 1, *x.shape))
-    velocities = np.zeros_like(positions)
-    positions[0], velocities[0] = x, v
-    a = acceleration(x)
-    for i in range(1, n_out + 1):
-        for _ in range(save_every):
-            v += 0.5 * dt * a
-            x += dt * v
-            a = acceleration(x)
-            v += 0.5 * dt * a
-        positions[i], velocities[i] = x, v
+    positions, velocities = leapfrog(acceleration, x, v, dt, n_steps // save_every, save_every)
     return positions.transpose(2, 1, 0), velocities.transpose(2, 1, 0)
 
 
@@ -127,7 +117,7 @@ def measure_precession(system):
     h = x0[:, 0] * v0[:, 1] - x0[:, 1] * v0[:, 0]
     n = len(names)
     # Rows 0..n-1: Newton, rows n..2n-1: GR. Same time steps for the pair.
-    pos, vel = leapfrog(np.tile(GM, 2), np.concatenate([np.zeros(n), 3 * h ** 2 / C ** 2]),
+    pos, vel = leapfrog_central(np.tile(GM, 2), np.concatenate([np.zeros(n), 3 * h ** 2 / C ** 2]),
                         np.vstack([x0, x0]), np.vstack([v0, v0]), np.tile(P / STEPS_PER_ORBIT, 2),
                         N_ORBITS * STEPS_PER_ORBIT)
     angle = perihelion_angle(np.tile(GM, 2), pos, vel)
@@ -275,7 +265,7 @@ def plot_rosette(system):
     h = x0[0] * v0[1] - x0[1] * v0[0]
     P = 2 * np.pi * np.sqrt(a ** 3 / GM)
     n_orbits = 18
-    pos, vel = leapfrog([GM, GM], [0, 3 * h ** 2 / c_slow ** 2], np.vstack([x0, x0]), np.vstack([v0, v0]),
+    pos, vel = leapfrog_central([GM, GM], [0, 3 * h ** 2 / c_slow ** 2], np.vstack([x0, x0]), np.vstack([v0, v0]),
                         [P / 4000] * 2, n_orbits * 4000, save_every=10)
     # This strong, the LRL vector wobbles within each orbit, so use the actual perihelion passages (minima of r)
     r = np.hypot(*pos[:, 1])

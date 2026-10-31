@@ -23,9 +23,10 @@ Figures go to figures/1*.png.
 import os
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, ".."))  # Repo root, for common/
-sys.path.insert(0, os.path.join(HERE, "..", "Project 2"))  # Orbits from Part 2
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))  # Repo root, for common/
+from common.paths import use_parts
+
+use_parts(2)
 
 import ast2000tools.constants as const
 import matplotlib.pyplot as plt

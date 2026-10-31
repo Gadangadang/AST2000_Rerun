@@ -19,9 +19,10 @@ Figures go to figures/d*.png.
 import os
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, ".."))  # Repo root, for common/
-sys.path.insert(0, os.path.join(HERE, "..", "Project 2"))  # Orbits from Part 2
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))  # Repo root, for common/
+from common.paths import use_parts
+
+use_parts(2)
 
 import ast2000tools.constants as const
 import matplotlib.pyplot as plt
@@ -35,15 +36,20 @@ from orbits import kepler_state
 def trilaterate(system, time, distances):
     """
     Position (x, y) [AU] from distances [AU] to planets 0..n-1 and the star (last), measured at `time` [yr].
-    Returns the position and the residuals |x - p_i| - d_i [AU].
+
+    distances: (n + 1,) for one measurement, or (..., n + 1) for many at the same time. Every
+    measurement shares the matrix A (the planet positions), so one least-squares call solves them all.
+    Returns the position(s) (..., 2) and the residuals |x - p_i| - d_i (..., n + 1) [AU].
     """
     distances = np.asarray(distances, dtype=float)
     planets = kepler_state(system, [time])[0][:, :, 0].T  # (n, 2)
-    d_planets, d_star = distances[:-1], distances[-1]
+    d_planets, d_star = distances[..., :-1], distances[..., -1:]
     A = 2 * planets
-    b = np.sum(planets ** 2, axis=1) + d_star ** 2 - d_planets ** 2
-    position = np.linalg.lstsq(A, b, rcond=None)[0]
-    residuals = np.append(np.linalg.norm(planets - position, axis=1) - d_planets, np.linalg.norm(position) - d_star)
+    b = np.sum(planets ** 2, axis=1) + d_star ** 2 - d_planets ** 2  # (..., n)
+    flat = b.reshape(-1, b.shape[-1]).T  # One column per measurement
+    position = np.linalg.lstsq(A, flat, rcond=None)[0].T.reshape(*b.shape[:-1], 2)
+    to_planets = np.linalg.norm(planets - position[..., None, :], axis=-1) - d_planets
+    residuals = np.concatenate([to_planets, np.linalg.norm(position, axis=-1, keepdims=True) - d_star], axis=-1)
     return position, residuals
 
 
@@ -53,16 +59,13 @@ def distances_from(system, time, position):
     return np.append(np.linalg.norm(planets - position, axis=1), np.linalg.norm(position))
 
 
-def noise_study(system, time, position, noise_levels, n_trials=200, seed=8):
-    """Position error vs. relative noise on the measured distances."""
+def noise_study(system, time, position, noise_levels, n_trials=2000, seed=8):
+    """Median position error vs. relative noise on the measured distances (all trials solved at once)."""
     rng = np.random.default_rng(seed)
     exact = distances_from(system, time, position)
-    errors = []
-    for level in noise_levels:
-        trial = [np.linalg.norm(trilaterate(system, time, exact * (1 + rng.normal(0, level, exact.size)))[0] - position)
-                 for _ in range(n_trials)]
-        errors.append(np.median(trial))
-    return np.array(errors)
+    noisy = exact * (1 + rng.normal(0, 1, (len(noise_levels), n_trials, exact.size)) * np.asarray(noise_levels)[:, None, None])
+    found, _ = trilaterate(system, time, noisy)
+    return np.median(np.linalg.norm(found - position, axis=-1), axis=1)
 
 
 # ===================================================================== figures

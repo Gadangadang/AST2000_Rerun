@@ -42,6 +42,7 @@ import numpy as np
 from scipy import optimize, signal
 
 from common.config import get_mission
+from common.integrators import leapfrog
 from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, PLANET_COLORS, VIOLET, save
 from orbits import G
 
@@ -83,19 +84,8 @@ def simulate_nbody(masses, x0, v0, duration, steps_per_year=STEPS_PER_YEAR, save
 
     n_out = int(np.ceil(duration * steps_per_year / save_every))
     dt = duration / (n_out * save_every)
-    times = np.linspace(0, duration, n_out + 1)
-    positions = np.zeros((n_out + 1, *x.shape))
-    velocities = np.zeros_like(positions)
-    positions[0], velocities[0] = x, v
-    a = acceleration(x)
-    for i in range(1, n_out + 1):
-        for _ in range(save_every):
-            v += 0.5 * dt * a
-            x += dt * v
-            a = acceleration(x)
-            v += 0.5 * dt * a
-        positions[i], velocities[i] = x, v
-    return times, positions, velocities, r_cm, v_cm
+    positions, velocities = leapfrog(acceleration, x, v, dt, n_out, save_every)
+    return np.linspace(0, duration, n_out + 1), positions, velocities, r_cm, v_cm
 
 
 def star_and_planets(system, planets):

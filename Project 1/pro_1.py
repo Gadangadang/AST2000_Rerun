@@ -28,10 +28,8 @@ import gas_box
 import launch
 import part_a_statistics
 import rocket
+from common.runner import banner
 
-
-def banner(text):
-    print("\n" + "=" * 78 + f"\n  {text}\n" + "=" * 78)
 
 
 def main():

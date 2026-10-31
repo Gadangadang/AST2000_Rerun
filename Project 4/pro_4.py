@@ -28,10 +28,8 @@ import orientation
 import sky_pictures
 import trilateration
 from common.config import MISSION_FILE
+from common.runner import banner
 
-
-def banner(text):
-    print("\n" + "=" * 78 + f"\n  {text}\n" + "=" * 78)
 
 
 def main():

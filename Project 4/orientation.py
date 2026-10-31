@@ -17,10 +17,10 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.join(HERE, "..")
-sys.path.insert(0, REPO)  # Repo root, for common/
-for part in ("Project 1", "Project 2", "Project 3"):
-    sys.path.insert(0, os.path.join(REPO, part))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))  # Repo root, for common/
+from common.paths import use_parts
+
+use_parts(1, 2, 3)
 
 import io
 from contextlib import redirect_stdout

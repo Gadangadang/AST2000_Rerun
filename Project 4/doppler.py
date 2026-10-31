@@ -26,8 +26,7 @@ Figures go to figures/c*.png.
 import os
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, ".."))  # Repo root, for common/
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))  # Repo root, for common/
 
 import ast2000tools.constants as const
 import matplotlib.pyplot as plt
