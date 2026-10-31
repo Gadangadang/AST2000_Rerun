@@ -53,7 +53,10 @@ from rocket import fuel_consumed, load_engine_box
 # longest launch physically possible is ~6.25 min (thrust/weight -> 1 at liftoff); see e_design_space.png.
 # A higher engine temperature allows longer launches and less fuel.
 TARGET_DURATION = 6 * 60  # [s]
-FUEL_RESERVE = 3000.0  # Fuel left in the tank after launch, for later parts (educated guess) [kg]
+# Fuel left in the tank after launch, for the journey [kg]. Chosen in Part 3 for planet 1: the Hohmann
+# transfer needs ~7.4 km/s and going into orbit ~2 km/s more. 10 000 kg with u = 4.4 km/s and the 1100 kg
+# spacecraft gives u ln((1100 + 10000) / 1100) = 10.1 km/s.
+FUEL_RESERVE = 10000.0
 LAUNCH_ANGLE = 0.0  # Launch site angle on the equator [rad]; 0 = the +x side of the planet (figure 2)
 TIME_OF_LAUNCH = 0.0  # [yr]
 

@@ -11,6 +11,7 @@ from ast2000tools.space_mission import SpaceMission
 
 USERNAME = "09012023"
 SEED = utils.get_seed(USERNAME)
+DESTINATION = 1  # Planet we travel to (chosen in Part 3: habitable, and by far the cheapest trip)
 
 REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 XML_DIR = os.path.join(REPO_DIR, "XMLs")  # Where ast2000tools writes its XML files for MCAst/SSView

@@ -57,13 +57,21 @@ def analytic_orbit(a, e, aphelion_angle, n_points=1000):
 
 
 def kepler_positions(system, times):
+    """Exact positions from Kepler's equation, shape (2, n_planets, n_times)."""
+    return kepler_state(system, times)[0]
+
+
+def kepler_state(system, times):
     """
-    Exact positions from Kepler's equation, shape (2, n_planets, n_times).
+    Exact positions [AU] and velocities [AU/yr] from Kepler's equation, each (2, n_planets, n_times).
 
     Mean anomaly M grows linearly in time; solve M = E - e sin E for the
     eccentric anomaly E with Newton's method, then convert to the true
-    anomaly f and the distance r = a (1 - e cos E).
+    anomaly f and the distance r = a (1 - e cos E). The velocity follows from
+    the orbit equation: v = sqrt(GM/p) (-sin f, e + cos f) along (perihelion, 90 deg ahead),
+    with p = a (1 - e^2).
     """
+    times = np.atleast_1d(np.asarray(times, dtype=float))
     a, e = system.semi_major_axes[:, None], system.eccentricities[:, None]
     perihelion = system.aphelion_angles[:, None] + np.pi
     n = np.sqrt(G * system.star_mass / a ** 3)  # Mean motion [rad/yr]
@@ -79,7 +87,12 @@ def kepler_positions(system, times):
     f = 2 * np.arctan2(np.sqrt(1 + e) * np.sin(E / 2), np.sqrt(1 - e) * np.cos(E / 2))
     r = a * (1 - e * np.cos(E))
     theta = f + perihelion
-    return np.array([r * np.cos(theta), r * np.sin(theta)])
+    positions = np.array([r * np.cos(theta), r * np.sin(theta)])
+    v_p = np.sqrt(G * system.star_mass / (a * (1 - e ** 2)))
+    v_peri, v_ahead = -v_p * np.sin(f), v_p * (e + np.cos(f))  # Components along / 90 deg ahead of perihelion
+    velocities = np.array([v_peri * np.cos(perihelion) - v_ahead * np.sin(perihelion),
+                           v_peri * np.sin(perihelion) + v_ahead * np.cos(perihelion)])
+    return positions, velocities
 
 
 # ================================================================ A2: simulate
