@@ -30,8 +30,12 @@ The engine numbers per box are written to engine_box.json for challenges D-F.
 Run:  ../.venv/bin/python engine.py
 Figures are written to figures/c*.png.
 """
-import json
 import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))  # Repo root, for common/
+
+import json
 import time
 
 import matplotlib.pyplot as plt
@@ -40,7 +44,7 @@ import numpy as np
 from ast2000tools.constants import k_B, m_H2
 from gas_box import analytical, initial_state
 from part_a_statistics import sample_velocities, sigma_v
-from plot_style import AQUA, BLUE, INK, MUTED, ORANGE, VIOLET, save
+from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, VIOLET, save
 
 # ------------------------------------------------------------------ parameters
 L = 1e-6  # Box side length [m]

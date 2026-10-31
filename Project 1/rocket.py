@@ -17,14 +17,19 @@ the formula against a brute-force step-by-step simulation of a boost.
 Run:  ../.venv/bin/python rocket.py
 Figures are written to figures/d*.png.
 """
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))  # Repo root, for common/
+
 import json
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-from config import get_mission
+from common.config import get_mission
 from engine import RESULT_FILE
-from plot_style import AQUA, BLUE, INK, MUTED, ORANGE, SERIES, save
+from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, SERIES, save
 
 
 def load_engine_box():

@@ -15,8 +15,12 @@ to engine_box.json, and the verified mission to mission_after_launch.bin.
   E  launch.py             Launch simulation and engine design
   F  launch.py             Result in the solar system frame + API check
 """
-import argparse
+import os
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))  # Repo root, for common/
+
+import argparse
 import time
 
 import engine

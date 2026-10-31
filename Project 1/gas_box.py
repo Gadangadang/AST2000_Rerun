@@ -22,6 +22,11 @@ Checks against challenge A:
 Run:  ../.venv/bin/python gas_box.py
 Figures are written to figures/b*.png.
 """
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))  # Repo root, for common/
+
 import time
 
 import matplotlib.pyplot as plt
@@ -29,7 +34,7 @@ import numpy as np
 
 from ast2000tools.constants import k_B, m_H2
 from part_a_statistics import mb_1d, mb_speed, sample_velocities, sigma_v
-from plot_style import AQUA, BLUE, INK, MUTED, ORANGE, SERIES, VIOLET, save
+from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, SERIES, VIOLET, save
 
 # ------------------------------------------------------------------ parameters
 L = 1e-6  # Box side length [m]

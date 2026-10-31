@@ -10,12 +10,17 @@ A3: <v>, P = nkT and <E> = 3/2 kT, checked by integration AND by drawing
 Run:  ../.venv/bin/python part_a_statistics.py
 Figures are written to figures/a*.png.
 """
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))  # Repo root, for common/
+
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import integrate, optimize, special
 
 from ast2000tools.constants import k_B, m_H2
-from plot_style import AQUA, BLUE, INK, MUTED, ORANGE, SERIES, save
+from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, SERIES, save
 
 N = int(1e5)  # Number of H2 molecules
 T = 3000.0  # Temperature [K]

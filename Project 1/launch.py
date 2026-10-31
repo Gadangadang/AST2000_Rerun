@@ -31,6 +31,11 @@ F: Positions and velocities in the star's frame, in AU, AU/yr and yr.
 Run:  ../.venv/bin/python launch.py
 Figures are written to figures/e*.png and figures/f*.png.
 """
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))  # Repo root, for common/
+
 import io
 from contextlib import redirect_stdout
 
@@ -39,8 +44,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy import integrate, optimize
 
-from config import MISSION_FILE, get_mission
-from plot_style import AQUA, BLUE, INK, MUTED, ORANGE, VIOLET, save
+from common.config import MISSION_FILE, get_mission
+from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, VIOLET, save
 from rocket import fuel_consumed, load_engine_box
 
 # ------------------------------------------------------------------ design choices
