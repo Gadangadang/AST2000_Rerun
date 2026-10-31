@@ -299,7 +299,8 @@ def compare_refill_methods(tau=TAU):
     save(fig, "c_refill_comparison")
 
 
-def main():
+def main(compare=True):
+    """Run challenge C. compare=False skips the ~50 s refill-method comparison."""
     ideal = ideal_engine()
     print(f"C     N = {N:.0e}, L = {L} m, T = {T:.0f} K, hole = {HOLE_AREA_FRACTION} L^2, "
           f"tau = {TAU} s, dt = {TAU / N_STEPS} s, refill = '{REFILL}'")
@@ -327,7 +328,8 @@ def main():
     plot_time_series(sim, perf, ideal)
     plot_exhaust(sim, perf)
     plot_flow_map(sim)
-    compare_refill_methods()
+    if compare:
+        compare_refill_methods()
 
 
 if __name__ == "__main__":

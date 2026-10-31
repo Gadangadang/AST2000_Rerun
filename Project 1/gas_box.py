@@ -331,7 +331,8 @@ def convergence_study():
     save(fig, "b_convergence")
 
 
-def main():
+def main(convergence=True):
+    """Run challenge B. convergence=False skips the ~30 s accuracy study."""
     ana = analytical()
     print(f"B     N = {N:.0e}, L = {L} m, T = {T:.0f} K, tau = {TAU} s, dt = {TAU / N_STEPS} s")
     t0 = time.perf_counter()
@@ -359,7 +360,8 @@ def main():
     plot_trajectories(sim)
     plot_pressure_and_hits(sim, ana)
     plot_scorecard(sim, ana, meas)
-    convergence_study()
+    if convergence:
+        convergence_study()
 
 
 if __name__ == "__main__":
