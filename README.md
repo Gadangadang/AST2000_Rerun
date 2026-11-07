@@ -18,8 +18,11 @@ to get ours back.
   for every seed.
 - `Project 6/spectra/`: the course's atmosphere spectra for all 100 seeds
   (`spectrum_seedXX.parquet`, XX = the last two digits of the seed) and the noise
-  (`sigma_noise.parquet`), 2.8 GB: float32, zstd with byte-stream-split (lossless). Course files dropped in
-  `Project 6/` (`.txt` or `.zip`) are converted on first use, or all at once with
+  (`sigma_noise.parquet`): 2.8 GB of float32, zstd with byte-stream-split (lossless).
+  They live on this repository's GitHub release `spectra`, not in git. Part 6 downloads the
+  one a seed needs automatically (with the `gh` CLI, logged in), and
+  `python spectrum.py --download` (in `Project 6/`) fetches all of them. Course files
+  dropped in `Project 6/` (`.txt` or `.zip`) are converted on first use, or all at once with
   `python spectrum.py --import`, which deletes the originals. Without a seed's spectrum,
   Part 6B is skipped and 6C takes the molecular weight from the drag probe alone.
 
