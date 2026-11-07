@@ -1,0 +1,59 @@
+% Shared style for the AST2000 papers (one per part, in "Project N/paper/").
+% Used as \usepackage{../../common/paper/ast2000} after \documentclass{revtex4-2}.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{ast2000}[2026/11/06 AST2000 rerun papers]
+
+\RequirePackage[utf8]{inputenc}
+\RequirePackage[T1]{fontenc}
+\RequirePackage{lmodern}
+\RequirePackage{microtype}
+\RequirePackage{amsmath,amssymb}
+\RequirePackage{graphicx}
+\RequirePackage{booktabs}
+\RequirePackage[separate-uncertainty=true]{siunitx}
+\RequirePackage{xcolor}
+\RequirePackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+\RequirePackage[capitalise,nameinlink]{cleveref}
+
+% Figures are made by the scripts in "Project N/figures/"
+\graphicspath{{../figures/}}
+
+% ---------------------------------------------------------------- numbers from the scripts
+% results.tex (written by common/report.py) holds lines \setvalue{key}{value}.
+% \val{key} prints the value, or a red ??key if the scripts have not produced it yet.
+\newcommand{\setvalue}[2]{\expandafter\def\csname astval@#1\endcsname{#2}}
+\newcommand{\val}[1]{%
+  \ifcsname astval@#1\endcsname\csname astval@#1\endcsname
+  \else\textbf{\textcolor{red}{??#1}}\fi}
+\IfFileExists{results.tex}{\input{results.tex}}{%
+  \PackageWarning{ast2000}{results.tex not found: run the part's pro_N.py first}}
+
+% ---------------------------------------------------------------- figures
+% A figure that may be missing (the scripts have not run, or a slow study was skipped with --quick)
+\newcommand{\safegraphic}[2][]{%
+  \IfFileExists{../figures/#2.png}{\includegraphics[#1]{#2}}%
+  {\fbox{\parbox{0.9\linewidth}{\centering\vspace{2em}\texttt{figures/\detokenize{#2}.png} not made yet:\\
+   run the part's \texttt{pro\_N.py} (without \texttt{--quick})\vspace{2em}}}}}
+
+% Full-width figure: \widefig{name}{caption}{label}
+\newcommand{\widefig}[3]{%
+  \begin{figure*}[tbp]\centering\safegraphic[width=\textwidth]{#1}\caption{#2}\label{#3}\end{figure*}}
+% One-column figure: \colfig{name}{caption}{label}
+\newcommand{\colfig}[3]{%
+  \begin{figure}[tbp]\centering\safegraphic[width=\columnwidth]{#1}\caption{#2}\label{#3}\end{figure}}
+
+% ---------------------------------------------------------------- notation
+\newcommand{\AU}{\,\mathrm{AU}}
+\newcommand{\yr}{\,\mathrm{yr}}
+\newcommand{\Msun}{M_\odot}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\vb}[1]{\mathbf{#1}}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+
+% A short "mission log" box for the key numbers of a part
+\newenvironment{missionbox}[1]{%
+  \par\smallskip\noindent\small\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}ll@{}}
+  \toprule\multicolumn{2}{@{}l}{\textbf{#1}}\\\midrule}{%
+  \bottomrule\end{tabular*}\par\smallskip}
+
+\endinput

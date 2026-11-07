@@ -25,6 +25,7 @@ import kepler
 import orbits
 import relativity
 import star_wobble
+from common.report import record_system
 from common.runner import banner
 
 
@@ -35,6 +36,7 @@ def main():
     args = parser.parse_args()
 
     start = time.perf_counter()
+    record_system()
     banner("A  Planetary orbits")
     orbits.main(study=not args.quick)
     banner("B  Kepler's laws")

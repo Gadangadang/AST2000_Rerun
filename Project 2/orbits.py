@@ -39,7 +39,8 @@ import numpy as np
 
 from common.config import SSVIEW_DATA_DIR, TRAJECTORY_FILE, XML_DIR, get_mission
 from common.integrators import leapfrog
-from common.plot_style import INK, MUTED, PLANET_COLORS, save
+from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, PLANET_COLORS, save
+from common.report import record
 
 G = const.G_sol  # = 4 pi^2 [AU^3 yr^-2 Msun^-1]
 N_HOME_ORBITS = 21  # Simulate a bit more than the 20 home-planet orbits the API checks
@@ -226,6 +227,65 @@ def plot_position_error(system, times, deviation):
     save(fig, "a2_position_error")
 
 
+def plot_system_overview(system):
+    """The solar system at a glance: speeds and periods along the orbits, and what the planets are made of."""
+    GM = G * system.star_mass
+    a, e = system.semi_major_axes, system.eccentricities
+    P = 2 * np.pi * np.sqrt(a ** 3 / GM)
+    v_circ = np.sqrt(GM / a) * const.AU / const.yr / 1e3  # [km/s]
+    mass_earth = system.masses * const.m_sun / 5.972e24
+    radius_earth = system.radii / 6371.0
+    density = system.masses * const.m_sun / (4 / 3 * np.pi * (system.radii * 1e3) ** 3)
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5.2))
+
+    ax = axes[0]
+    a_line = np.logspace(np.log10(a.min() * 0.7), np.log10(a.max() * 1.3), 200)
+    ax.loglog(a_line, np.sqrt(GM / a_line) * const.AU / const.yr / 1e3, color=INK, lw=1.2,
+              label=r"circular speed $\sqrt{GM_\star/a}$")
+    for p in range(len(a)):
+        v_peri = np.sqrt(GM * (1 + e[p]) / (a[p] * (1 - e[p]))) * const.AU / const.yr / 1e3
+        v_aph = np.sqrt(GM * (1 - e[p]) / (a[p] * (1 + e[p]))) * const.AU / const.yr / 1e3
+        ax.plot([a[p]] * 2, [v_aph, v_peri], color=PLANET_COLORS[p], lw=4, alpha=0.5)
+        ax.plot(a[p], v_circ[p], "o", color=PLANET_COLORS[p], ms=9, mec=INK, mew=0.5)
+        ax.annotate(f" {p}", (a[p], v_circ[p]), fontsize=9)
+    ax.set_xlabel("semi-major axis [AU]")
+    ax.set_ylabel("orbital speed [km/s]")
+    ax.set_title("Speed along the orbit (bars: aphelion to perihelion)")
+    ax.legend(fontsize=8)
+
+    ax = axes[1]
+    r_line = np.logspace(-1, 1.5, 100)
+    for rho, ls in ((1000, ":"), (3000, "--"), (5500, "-")):
+        m_line = rho * 4 / 3 * np.pi * (r_line * 6.371e6) ** 3 / 5.972e24
+        ax.loglog(r_line, m_line, color=MUTED, lw=0.8, ls=ls, label=f"{rho} kg/m$^3$")
+    for p in range(len(a)):
+        ax.plot(radius_earth[p], mass_earth[p], "o", color=PLANET_COLORS[p], ms=10 if system.types[p] == "gas" else 8,
+                mec=INK, mew=0.5)
+        ax.annotate(f"{p} ({density[p]:.0f})", (radius_earth[p], mass_earth[p]), fontsize=8,
+                    xytext=(6, -12 if p % 2 else 4), textcoords="offset points")
+    ax.set_xlim(0.15, 30)
+    ax.set_ylim(5e-3, 5e3)
+    ax.set_xlabel("radius [Earth radii]")
+    ax.set_ylabel("mass [Earth masses]")
+    ax.set_title("What they are made of (label: density in kg/m$^3$)")
+    ax.legend(fontsize=8, title="constant density", title_fontsize=8, loc="upper left")
+
+    ax = axes[2]
+    order = np.argsort(a)
+    x = np.arange(len(a))
+    ax.bar(x, P[order], color=[PLANET_COLORS[p] for p in order], width=0.6)
+    ax.set_yscale("log")
+    for xi, p in zip(x, order):
+        ax.annotate(f"{P[p]:.2f} yr\ne = {e[p]:.3f}", (xi, P[p]), xytext=(0, 3), textcoords="offset points",
+                    ha="center", fontsize=7)
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"{p}\n{system.types[p]}" for p in order])
+    ax.set_ylabel("orbital period [yr]")
+    ax.set_title("Periods and eccentricities, inner to outer")
+    fig.suptitle(f"A  The system at a glance: a {system.star_mass:.2f} M$_\\odot$ star and {len(a)} planets", fontsize=12)
+    save(fig, "a3_system_overview")
+
+
 def timestep_study(system, duration):
     """Max relative deviation over all planets for several time steps: picks STEPS_PER_YEAR."""
     print("A2    time-step study ...")
@@ -236,6 +296,8 @@ def timestep_study(system, duration):
         worst.append(np.max(relative_deviation(pos, kepler_positions(system, t))))
         print(f"      {s:>6} steps/yr: worst deviation {worst[-1]:.2e}")
     worst = np.array(worst)
+    record("dt-worst-10000", worst[steps == 10000][0] * 100, "{:.2g}")
+    record("dt-worst-chosen", worst[steps == STEPS_PER_YEAR][0] * 100, "{:.2g}")
     fig, ax = plt.subplots(figsize=(8, 4.5))
     ax.loglog(steps, worst * 100, "o-", color=PLANET_COLORS[0], ms=6, label="simulation (worst planet)")
     ax.loglog(steps, worst[0] * 100 * (steps / steps[0]) ** -2.0, "--", color=MUTED, lw=1.2,
@@ -276,6 +338,9 @@ def verify_with_api(mission, times, positions):
         if k > 1:
             print(f"      (the API's solver failed on our full sample set; used 1 in {k} samples: {len(idx)} times)")
         print("      " + "\n      ".join(line for line in log.getvalue().splitlines() if line.strip()))
+        record("verified", "passed" if "successfully" in log.getvalue().lower() or "well done" in log.getvalue().lower()
+               else "see log")
+        record("api-thinning", k, "{:d}")
         return
     raise RuntimeError("the API's orbit solver kept failing")
 
@@ -304,6 +369,16 @@ def main(study=True):
               f"e = {system.eccentricities[p]:.4f}, period {P[p]:7.3f} yr, mass {system.masses[p]:.3e} Msun")
 
     plot_analytic(system)
+    plot_system_overview(system)
+    record("star-mass", system.star_mass, "{:.3f}")
+    record("n-planets", system.number_of_planets, "{:d}")
+    record("home-a", system.semi_major_axes[0], "{:.3f}")
+    record("home-e", system.eccentricities[0], "{:.4f}")
+    record("home-P", P[0], "{:.3f}")
+    record("n-home-orbits", N_HOME_ORBITS, "{:d}")
+    record("steps-per-year", STEPS_PER_YEAR, "{:,}")
+    record("fastest-P", P.min(), "{:.3f}")
+    record("slowest-P", P.max(), "{:.1f}")
 
     duration = N_HOME_ORBITS * P[0]
     if study:
@@ -318,6 +393,14 @@ def main(study=True):
     deviation = relative_deviation(positions, kepler_positions(system, times))
     worst = np.unravel_index(np.argmax(deviation), deviation.shape)
     print(f"      worst deviation from Kepler's equation: {deviation[worst]:.2e} (planet {worst[0]})")
+    GM = G * system.star_mass
+    energy = 0.5 * np.sum(velocities ** 2, axis=0) - GM / np.linalg.norm(positions, axis=0)
+    h = positions[0] * velocities[1] - positions[1] * velocities[0]
+    record("sim-duration", duration, "{:.2f}")
+    record("worst-dev", deviation[worst] * 100, "{:.2g}")
+    record("worst-dev-planet", int(worst[0]), "{:d}")
+    record("energy-err", np.max(np.abs(energy / energy[:, :1] - 1)), "{:.1e}")
+    record("h-err", np.max(np.abs(h / h[:, :1] - 1)), "{:.1e}")
     plot_simulated(system, times, positions)
     plot_conservation(system, times, velocities=velocities, positions=positions)
     plot_position_error(system, times, deviation)

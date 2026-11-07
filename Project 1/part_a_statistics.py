@@ -21,6 +21,7 @@ from scipy import integrate, optimize, special
 
 from ast2000tools.constants import k_B, m_H2
 from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, SERIES, save
+from common.report import record
 
 N = int(1e5)  # Number of H2 molecules
 T = 3000.0  # Temperature [K]
@@ -105,6 +106,7 @@ def run_a1():
         a, b = mu - k * sigma, mu + k * sigma
         p = probability(a, b, mu, sigma)
         probs.append(p)
+        record(f"a-P{k}sigma", p, "{:.4f}")
         print(f"      P(|x - mu| <= {k}sigma) = {p:.6f} | {exact_probability(a, b, mu, sigma):.6f} | "
               f"{integrate.quad(gaussian, a, b, args=(mu, sigma))[0]:.6f}")
 
@@ -139,6 +141,7 @@ def run_a1():
     # A1.4: FWHM
     fwhm = numerical_fwhm(mu, sigma)
     fwhm_ana = 2 * np.sqrt(2 * np.log(2)) * sigma
+    record("a-fwhm", fwhm, "{:.4f}")
     print(f"A1.4  FWHM numerical = {fwhm:.8f} sigma, analytical 2 sqrt(2 ln 2) sigma = {fwhm_ana:.8f} sigma")
     fig, ax = plt.subplots(figsize=(7, 4))
     ax.plot(x, gaussian(x, mu, sigma), color=INK)
@@ -164,6 +167,11 @@ def run_a2(rng):
     vx = np.linspace(-2.5e4, 2.5e4, 1000)
     a, b = 5e3, 30e3
     p = simpson(mb_1d, a, b)
+    record("a-P-window", p, "{:.4f}")
+    record("a-N-window", N * p, "{:.0f}")
+    record("a-sigma-v", s, "{:.0f}")
+    for name, key in (("v_mp", "a-vmp"), ("<v>", "a-vmean"), ("v_rms", "a-vrms")):
+        record(key, speeds[name], "{:.0f}")
     print(f"A2.2  P(5 km/s <= vx <= 30 km/s) = {p:.6f}  ->  N*P = {N * p:.0f} molecules")
     fig, ax = plt.subplots(figsize=(7, 4))
     ax.plot(vx / 1e3, mb_1d(vx) * 1e3, color=INK)
@@ -301,6 +309,9 @@ def run_a3(rng):
     ax.legend(loc="lower left")
     save(fig, "a3_sampling_error")
     i = np.argmin(np.abs(Ns - N))
+    record("a-err-v", expected_v[i] * 100, "{:.2f}")
+    record("a-err-E", expected_E[i] * 100, "{:.2f}")
+    record("a-P-nkT", analytic["P"], "{:.4e}")
     print(f"A3    expected 1-sigma sampling error at N = {N:.0e}: <v> {expected_v[i]:.2%}, <E> {expected_E[i]:.2%}")
 
 

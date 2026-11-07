@@ -24,6 +24,7 @@ XML_DIR = os.path.join(REPO_DIR, "XMLs")  # Where ast2000tools writes its XML fi
 MISSION_FILE = os.path.join(REPO_DIR, "Project 1", "mission_after_launch.bin")  # Verified launch (Part 1)
 ORIENTED_MISSION_FILE = os.path.join(REPO_DIR, "Project 4", "mission_after_orientation.bin")  # Oriented (Part 4)
 JOURNEY_MISSION_FILE = os.path.join(REPO_DIR, "Project 5", "mission_in_orbit.bin")  # In orbit at the destination (Part 5)
+JOURNEY_STATE_FILE = os.path.join(REPO_DIR, "Project 5", "journey_state.json")  # Fuel left etc. (the .bin does not keep it)
 TRAJECTORY_FILE = os.path.join(REPO_DIR, "Project 2", "planet_trajectories.npz")  # Exact orbits (Part 2)
 MCAST_DATA_DIR = os.path.join(REPO_DIR, "MCAst", "data")  # MCAst reads its XML files from here
 SSVIEW_DATA_DIR = os.path.join(REPO_DIR, "MCAst", "ssv_data")  # SSView reads from its own folder, not data/

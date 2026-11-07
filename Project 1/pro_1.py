@@ -28,6 +28,7 @@ import gas_box
 import launch
 import part_a_statistics
 import rocket
+from common.report import record_system
 from common.runner import banner
 
 
@@ -38,6 +39,7 @@ def main():
     args = parser.parse_args()
 
     start = time.perf_counter()
+    record_system()
     banner("A  Investigating Boltzmann statistics")
     part_a_statistics.main()
     banner("B  Simulating energetic gas particles")

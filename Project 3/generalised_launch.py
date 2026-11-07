@@ -43,6 +43,7 @@ import numpy as np
 
 from common.config import get_mission
 from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, PLANET_COLORS, save
+from common.report import record
 from launch import HomePlanet, design_engine, simulate_launch, to_solar_system_frame
 from orbits import kepler_state
 from rocket import load_engine_box
@@ -189,6 +190,7 @@ def main():
     state = launch_state(launch, planet, system, 0.0, 0.0)
     pos0, vel0 = (q[:, 0, 0] for q in kepler_state(system, [0.0]))
     linear = to_solar_system_frame(launch, planet, 0.0, 0.0, pos0, vel0)
+    record("curved-vs-straight", np.linalg.norm(linear[1] - state[1]) * const.AU / 1e3, "{:.2f}")
     print(f"      straight-line vs. curved planet motion during launch: "
           f"{np.linalg.norm(linear[1] - state[1]) * const.AU / 1e3:.2f} km")
 
@@ -210,6 +212,12 @@ def main():
 
     plot_launch_sites(launch, planet, system)
     plot_launch_times(system, results)
+    record("n-tests", len(results), "{:d}")
+    record("n-verified", sum(r["verified"] for r in results), "{:d}")
+    record("max-miss", max(r["miss_km"] for r in results), "{:.2f}")
+    record("max-miss-v", max(r["miss_v"] for r in results), "{:.2f}")
+    record("tolerance", 0.015 * system.radii[0], "{:.0f}")
+    record("drift-km", planet.v_rot * launch["duration"] / 1e3, "{:.0f}")
     return engine, launch, results
 
 

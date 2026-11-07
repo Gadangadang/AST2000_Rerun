@@ -1,0 +1,292 @@
+% AST2000 Part 1: from a box of hot gas to an escaping rocket.
+% Compile: cd "Project 1/paper" && latexmk -pdf part1.tex   (or: python build_papers.py from the repo root)
+% Every number written as \val{...} comes from results.tex, made by pro_1.py.
+\documentclass[aps,prd,twocolumn,nofootinbib,floatfix,superscriptaddress]{revtex4-2}
+\usepackage{../../common/paper/ast2000}
+
+\begin{document}
+
+\title{Part 1: From a Box of Hot Gas to an Escaping Rocket}
+\author{Sakarias Frette}
+\affiliation{AST2000 Rerun, University of Oslo}
+\date{\today}
+
+\begin{abstract}
+We design a rocket engine from first principles and use it to launch a spacecraft off its home planet.
+We model the engine as many tiny boxes of hot hydrogen gas ($T=\val{box-T}\,$K), each with a small nozzle in one wall.
+Our own molecular simulation of a box reproduces the Maxwell--Boltzmann predictions for speed, energy and pressure to within the statistical error expected for $N=\val{box-N}$ particles.
+With a nozzle and a fuel inlet, one box gives a thrust of \val{c-thrust-box}\,N for a fuel use of \val{c-mdot-box}\,kg/s, so the exhaust speed is $u=\val{c-u}$\,m/s.
+We then design the launch: \val{n-boxes} boxes give \val{thrust}\,kN of thrust and burn \val{mdot}\,kg/s.
+A thrust-to-weight ratio of \val{liftoff-tw} at liftoff gives a \val{launch-minutes}-minute radial launch that reaches escape velocity \val{launch-height}\,km up, with \val{fuel-left}\,kg of fuel left for the journey.
+Gravity takes \val{gravity-loss-pct}\% of the rocket equation's ideal $\Delta v$.
+The final position in the star's frame was verified by \code{ast2000tools} (verification \val{verified}, solar system seed \val{seed}).
+\end{abstract}
+
+\maketitle
+
+% =====================================================================
+\section{Introduction}
+A rocket works by throwing mass backwards.
+The faster the exhaust leaves, the less fuel a given change in speed costs, and the exhaust speed of a chemical or thermal engine is set by how fast its gas molecules move.
+In this first part of the AST2000 spacecraft project~\cite{ast2000project} we follow this chain from the bottom up.
+\begin{itemize}
+\item Statistics of hot gas: the Gaussian and Maxwell--Boltzmann distributions (\cref{sec:stat}).
+\item A molecular simulation of a closed box of hydrogen, tested against those predictions (\cref{sec:box}).
+\item A nozzle in that box: thrust and fuel use per box (\cref{sec:engine}).
+\item The rocket equation, and a full launch simulation with gravity, used to size the engine (\cref{sec:launch}).
+\item Converting the result to the star's frame, checked by the official \code{ast2000tools} package~\cite{ast2000tools} (\cref{sec:frame}).
+\end{itemize}
+We aimed to understand every number well enough to predict how the result changes if something goes wrong.
+So beyond the required results we report error budgets, sensitivities and a full energy accounting of the launch.
+
+% =====================================================================
+\section{Gas statistics}\label{sec:stat}
+\subsection{Theory}
+A normal distribution with mean $\mu$ and standard deviation $\sigma$ has the density
+\begin{equation}
+  f(\mu,\sigma;x) = \frac{1}{\sqrt{2\pi}\,\sigma}\exp\left[-\frac{1}{2}\left(\frac{x-\mu}{\sigma}\right)^2\right].
+\end{equation}
+In an ideal gas at temperature $T$, each velocity component of a molecule of mass $m$ follows this distribution with $\mu=0$ and $\sigma_v=\sqrt{kT/m}$~\cite{schroeder2000}.
+The three components are independent, and the speed $v=|\vb v|$ then follows the Maxwell--Boltzmann distribution
+\begin{equation}
+  P(v) = \left(\frac{m}{2\pi kT}\right)^{3/2} e^{-mv^2/2kT}\,4\pi v^2. \label{eq:mb}
+\end{equation}
+Integrating \cref{eq:mb} gives the mean speed $\langle v\rangle=\sqrt{8kT/\pi m}$, the mean kinetic energy $\langle E\rangle=\tfrac32 kT$ and the pressure $P=nkT$.
+
+\subsection{Method}
+We wrote a composite Simpson integrator, whose error falls as $n^{-4}$ with the number of intervals $n$.
+We tested it on the probabilities of falling within $1$, $2$ and $3\sigma$ and on the full width at half maximum (FWHM).
+We then evaluated $\langle v\rangle$, $\langle E\rangle$ and $P$ numerically for H$_2$ at $T=\val{box-T}\,$K.
+
+\subsection{Results}
+The integrator gives $P(|x-\mu|<k\sigma)=\val{a-P1sigma}$, \val{a-P2sigma} and \val{a-P3sigma} for $k=1,2,3$, and FWHM $=\val{a-fwhm}\,\sigma$, which equals $2\sqrt{2\ln2}\,\sigma$ (\cref{fig:gauss}).
+For H$_2$ at \val{box-T}\,K, $\sigma_v=\val{a-sigma-v}$\,m/s.
+The most probable, mean and rms speeds are \val{a-vmp}, \val{a-vmean} and \val{a-vrms}\,m/s (\cref{fig:mb}).
+Only a fraction \val{a-P-window} of the molecules have $5\le v_x\le30$\,km/s, which is about \val{a-N-window} of $10^5$.
+
+One point looks like a paradox: the velocity components peak at zero, but the speed distribution peaks at $v_{mp}>0$.
+\Cref{fig:noconflict} resolves it.
+Velocity \emph{vectors} are densest at the origin, but the shell of speeds near $v$ grows as $4\pi v^2$.
+
+A finite gas only estimates these averages.
+The relative scatter of a sample mean is $\sqrt{3\pi/8-1}/\sqrt N$ for $\langle v\rangle$ and $\sqrt{2/3}/\sqrt N$ for $\langle E\rangle$ and $P$ (\cref{fig:sampling}).
+For $N=10^5$ these are \val{a-err-v}\% and \val{a-err-E}\%.
+This sets the accuracy we can expect from the box simulation.
+
+\colfig{a1_gaussian_sigma_bands}{Probability within $1$, $2$ and $3\sigma$ of the mean, from our Simpson integrator.}{fig:gauss}
+\colfig{a2_mb_speed}{Maxwell--Boltzmann speed distribution of H$_2$ at \val{box-T}\,K, with the three characteristic speeds.}{fig:mb}
+\widefig{a2_why_no_conflict}{Left: $10^5$ sampled velocity vectors are densest at the origin. Right: the Boltzmann factor falls with $v$ while the area of a speed shell grows as $v^2$. Their product is $P(v)$, which peaks at $v_{mp}$.}{fig:noconflict}
+\colfig{a3_sampling_error}{RMS relative error of $\langle v\rangle$ and $\langle E\rangle$ for a gas of $N$ particles, with the expected $1/\sqrt N$ laws.}{fig:sampling}
+
+% =====================================================================
+\section{A box of gas}\label{sec:box}
+\subsection{Method}
+We place $N=\val{box-N}$ H$_2$ molecules uniformly in a cube of side $L=\val{box-L}\,\mu$m, with Maxwell--Boltzmann velocities.
+They move freely and bounce elastically off the walls, and we follow them for $\tau=\val{box-tau}\,$ns.
+
+Between bounces the motion is an exact straight line, and a bounce is an exact mirror image.
+A molecule that crosses a wall during a step is therefore reflected back through it ($x\to-x$ or $x\to2L-x$) and its normal velocity is reversed.
+This puts it exactly where a mid-step bounce would have.
+The simulation is then \emph{exact for any time step}, as long as no molecule crosses the whole box in one step.
+The only errors left are statistical.
+Each step only about 1\% of the molecules reach a wall, so the bookkeeping runs on that subset.
+The pressure is the momentum given to the walls, $2m|v_\perp|$ per hit, divided by area and time.
+
+\subsection{Results}
+The velocity and position distributions stay Maxwellian and uniform throughout the run (\cref{fig:boxdist}).
+\Cref{fig:scorecard} compares every measured quantity with theory.
+The deviations are \val{box-v-err}\% ($\langle v\rangle$), \val{box-E-err}\% ($\langle E\rangle$), \val{box-P-err}\% ($P$) and \val{box-hits-err}\% (wall hit rate).
+Each is of the size the $1/\sqrt N$ noise predicts (\val{box-noise}\% for $P$).
+
+\Cref{fig:walls} shows why the deviations look the way they do.
+All six walls see the same molecules for the whole run, and $|v_i|$ never changes in a bounce.
+Each wall therefore measures \emph{this sample's} $\langle v_i^2\rangle$, not the ensemble value $kT/m$.
+Predicting each wall from the sample's own velocities reproduces the measured pressures to \val{box-wall-vs-sample}\%, which is the counting noise of a \val{box-tau}\,ns run.
+The convergence study (\cref{fig:boxconv}) confirms both points.
+The pressure error falls as $1/\sqrt N$, and it does not depend on the time step at all.
+
+\widefig{b_distributions}{The gas after the run: $v_x$ and speed distributions against the analytical Maxwell--Boltzmann curves, and uniform positions.}{fig:boxdist}
+\colfig{b_scorecard}{Scorecard: relative error of each check (bars) against the expected $1\sigma$ statistical noise (ticks).}{fig:scorecard}
+\widefig{b_walls}{Every wall separately. Bars: measured hits and pressure. Black ticks: predicted from the velocities of this particular sample. Grey band: the spread expected for a new random sample.}{fig:walls}
+\widefig{b_convergence}{Left: the pressure error falls as $1/\sqrt N$. Right: thanks to exact mirroring, the result does not depend on the time step.}{fig:boxconv}
+
+% =====================================================================
+\section{The engine}\label{sec:engine}
+\subsection{Theory}
+A hole of area $A$ in a wall of a gas in equilibrium lets out $nA\sqrt{kT/2\pi m}$ particles per second.
+They carry momentum $PA/2$ per second, so the effusion exhaust speed is $u=\sqrt{\pi kT/2m}=\val{c-u-ideal}$\,m/s.
+
+\subsection{Method}
+We cut a square hole of area $\val{c-hole}L^2$ in the middle of the wall $x=L$ and count the momentum $mv_x$ of every molecule that leaves.
+To keep $N$ constant, each escaped molecule must be replaced, and \emph{how} it is replaced turns out to matter.
+We use a fuel inlet the size of the hole in the opposite wall.
+It injects molecules with the flux-weighted (Rayleigh) $v_x$ distribution that a wall at temperature $T$ emits.
+We compare this with three alternatives:
+\begin{itemize}
+\item a closed box (equilibrium);
+\item reinjecting the same molecule at the opposite wall;
+\item a fresh Maxwellian molecule at a random spot.
+\end{itemize}
+Thrust and fuel use are averaged over \val{c-tau}\,ns after a \val{c-burn-in}\,ns burn-in.
+
+\subsection{Results}
+The engine box settles into a steady flow toward the nozzle within the burn-in, and its temperature stays at \val{box-T}\,K (\cref{fig:engine}).
+Per box we find
+\begin{itemize}
+\item thrust $F=\val{c-thrust-box}$\,N;
+\item fuel use $\dot m=\val{c-mdot-box}$\,kg/s;
+\item exhaust speed $u=F/\dot m=\val{c-u}$\,m/s.
+\end{itemize}
+These come from \val{c-escaped} escaped molecules, so the Poisson error is \val{c-stat-err}\%.
+The thrust is \val{c-thrust-ratio} times the equilibrium value.
+The inlet feeds a beam aimed at the nozzle, so more molecules leave than in equilibrium (\cref{fig:flow}).
+The exhaust speed, however, is almost unchanged, since it is set by the flux-weighted velocity distribution (\cref{fig:exhaust}).
+
+The refill method matters (\cref{fig:refill}), with thrust ratios
+\begin{itemize}
+\item \val{c-ratio-closed} for the closed box;
+\item \val{c-ratio-inlet} for the inlet;
+\item \val{c-ratio-opposite} for reinjection at the opposite wall;
+\item \val{c-ratio-random} for random refill.
+\end{itemize}
+Random refill fails because the fastest molecules escape most often but are replaced by average ones.
+This cools the gas to \val{c-Tend-random}\,K and the thrust keeps falling.
+
+\widefig{c_engine_time_series}{One engine box. Escape rate, thrust and gas temperature against time. The grey band is the burn-in, which we ignore.}{fig:engine}
+\colfig{c_exhaust_velocities}{The escaping molecules follow the flux-weighted distribution $\propto v_x e^{-mv_x^2/2kT}$, not the distribution inside the gas.}{fig:exhaust}
+\colfig{c_flow_map}{Mean $v_x$ in the slab in front of the hole: the gas streams from the inlet toward the nozzle.}{fig:flow}
+\widefig{c_refill_comparison}{Thrust and temperature for four ways of keeping $N$ constant. Only the inlet keeps both steady.}{fig:refill}
+
+% =====================================================================
+\section{Launch}\label{sec:launch}
+\subsection{The rocket equation}
+Without gravity, momentum conservation gives $m\,\dd v=-u\,\dd m$, so a boost $\Delta v$ costs
+\begin{equation}
+  \Delta m = m_0\left(1-e^{-\Delta v/u}\right) \label{eq:rocket}
+\end{equation}
+of fuel.
+\Cref{eq:rocket} depends only on $u$, not on the number of boxes.
+The engine size only sets how \emph{fast} the boost happens (\cref{fig:rocket}).
+A step-by-step simulation of a boost agrees with \cref{eq:rocket} to $10^{-5}$.
+
+\subsection{Method}
+The rocket rises radially from the equator of the home planet, which has
+\begin{itemize}
+\item radius $R=\val{home-R}$\,km;
+\item mass $M=\val{home-M}$\,kg;
+\item surface gravity $g_0=\val{home-g}$\,m/s$^2$;
+\item escape speed $\val{home-vesc}$\,km/s;
+\item rotation period $\val{home-Prot}$\,h, which gives an equatorial speed of $v_{rot}=\val{home-vrot}$\,m/s.
+\end{itemize}
+We integrate $(r,v_r,m)$ with
+\begin{equation}
+  \dot v_r = \frac{F}{m}-\frac{GM}{r^2},\qquad \dot m=-\dot m_{\rm engine},
+\end{equation}
+using an adaptive Runge--Kutta solver.
+The solver detects the escape condition $\tfrac12(v_r^2+v_{rot}^2)=GM/r$ as an exact event.
+
+Dividing the equations by $F$ shows that, for a fixed $u$, the whole launch depends on one number: the initial thrust acceleration $F/m_0$.
+So we solve a single 1D root-finding problem for the $F/m_0$ that gives a \val{target-duration}-minute launch.
+We then scale the rocket so that exactly \val{fuel-reserve}\,kg of fuel are left at escape.
+
+\subsection{Results}
+The design (\cref{fig:launch}) uses
+\begin{itemize}
+\item \val{n-boxes} boxes, giving $F=\val{thrust}$\,kN and $\dot m=\val{mdot}$\,kg/s;
+\item \val{fuel-loaded}\,t of fuel, for a liftoff thrust-to-weight ratio of \val{liftoff-tw}.
+\end{itemize}
+Escape comes after \val{launch-duration}\,s at a height of \val{launch-height}\,km, at $v_r=\val{launch-vr}$\,km/s.
+By then the launch has burned \val{fuel-used}\,t of fuel.
+
+\Cref{fig:design} shows why the launch cannot be much longer.
+A gentler liftoff (thrust-to-weight ratio near 1) lengthens the launch, but it also wastes more fuel on hovering.
+With $u=\val{c-u}$\,m/s, about \val{longest-launch} minutes is the physical maximum.
+A hotter engine would allow longer launches.
+
+\Cref{fig:energy} accounts for the fuel.
+The rocket equation promises $u\ln(m_0/m)=\val{ideal-dv}$\,km/s, of which the rocket keeps \val{launch-vr}\,km/s.
+The remaining $\int g\,\dd t=\val{gravity-loss}$\,km/s (\val{gravity-loss-pct}\%) is the gravity loss.
+Without gravity the same final speed would have cost \val{fuel-no-gravity}\,t of fuel.
+The crew feels $\val{liftoff-tw}\,g$ at liftoff, rising steeply as the rocket empties.
+
+\Cref{fig:sensitivity} asks what happens if the engine is a few percent off.
+The engine's \val{stat-error}\% statistical uncertainty changes the reserve by only $\sim10^2$\,kg, a margin we can afford.
+A 5\% weaker engine takes \val{weak-duration}\,min and leaves \val{weak-fuel-left}\,kg.
+An error in the exhaust speed costs fuel about three times faster than the same error in thrust.
+
+\widefig{d_rocket_equation}{Left: fuel for a boost against $\Delta v$, from \cref{eq:rocket} (lines) and a step-by-step simulation (circles). Right: the required mass ratio grows exponentially with $\Delta v/u$.}{fig:rocket}
+\widefig{e_launch}{The launch: height, radial speed against the escape speed, fuel and net acceleration.}{fig:launch}
+\widefig{e_design_space}{Engine design space. Launch duration and fuel burned against the thrust-to-weight ratio at liftoff, for three engine temperatures. The dashed line is our design.}{fig:design}
+\widefig{e_energy_and_losses}{Where the fuel goes. Energy per kg reaches zero at escape. The rocket equation's ideal $\Delta v$ splits into speed gained and gravity loss. Load factor felt by the crew. Mass budget on the pad.}{fig:energy}
+\widefig{e_sensitivity}{The same launch with an engine that is weaker or stronger than measured. The grey band is the statistical uncertainty of our engine simulation.}{fig:sensitivity}
+
+% =====================================================================
+\section{The star's frame}\label{sec:frame}
+During a launch of a few minutes the planet moves along an essentially straight line.
+The final state relative to the star is therefore
+\begin{align}
+  \vb r &= \vb r_p + (\vb v_p + v_{rot}\hat{\vb e}_t)\,\Delta t + r_{\rm final}\,\hat{\vb e}_r,\\
+  \vb v &= \vb v_p + v_{rot}\hat{\vb e}_t + v_r\hat{\vb e}_r,
+\end{align}
+where $\hat{\vb e}_r$ points from the planet's centre to the launch site and $\hat{\vb e}_t$ points along the rotation.
+Launching from $\phi=0$ at $t=0$ gives the following state at $t=\val{time-after}\,$yr:
+\begin{itemize}
+\item position $(\val{pos-after-x},\,\val{pos-after-y})\AU$;
+\item velocity $(\val{vel-after-x},\,\val{vel-after-y})\AU/\yr$.
+\end{itemize}
+\code{ast2000tools} launched the same rocket with its own 0.01\,s Euler steps.
+It reached escape after \val{api-duration}\,s and accepted our position (\cref{fig:frame}).
+
+The launch site is a free parameter, and \cref{fig:angle} shows that it matters.
+The planet moves along its orbit at \val{v-planet}\,km/s.
+Launching along that motion gives up to \val{speed-max-angle}\,km/s relative to the star, against \val{speed-min-angle}\,km/s backwards.
+Part 5 uses this: it picks the launch site so that ``up'' points along the departure direction it needs.
+
+\widefig{f_solar_system_frame}{The launch seen from the star's frame, relative to the planet's position at $t=0$: the planet moves on while the rocket climbs.}{fig:frame}
+\widefig{f_launch_angle}{Speed relative to the star right after launch, against the launch-site angle on the equator.}{fig:angle}
+
+% =====================================================================
+\section{Discussion}
+The main approximations are as follows:
+\begin{itemize}
+\item ideal-gas molecules without collisions;
+\item a box much smaller than any real engine (we simply take many of them);
+\item a purely radial launch with no air resistance.
+\end{itemize}
+The gas model enters the launch only through two numbers, $F$ and $\dot m$ per box, and their ratio $u$.
+\Cref{fig:sensitivity} shows how strongly the reserve depends on them.
+
+The most useful insight is the scaling argument: the launch depends only on $F/m_0$ and $u$.
+It turned the engine design into a one-dimensional root search.
+It also shows directly that a hotter engine (larger $u$) is the way to longer, cheaper launches.
+
+The 25\% gravity loss is inherent in a radial launch: the rocket spends minutes simply holding itself up.
+A real rocket turns sideways early to reduce it.
+
+\section{Conclusion}
+From a box of $10^5$ simulated hydrogen molecules we built an engine with an exhaust speed of \val{c-u}\,m/s.
+We sized it to lift a \val{craft-mass}\,kg spacecraft to escape velocity in \val{launch-minutes} minutes with \val{fuel-left}\,kg of fuel to spare.
+The result was verified by \code{ast2000tools}, and the mission state is saved for the next parts.
+
+\begin{acknowledgments}
+Simulations use NumPy and SciPy, and the verification uses \code{ast2000tools}~\cite{ast2000tools}.
+The code is in \code{Project 1/} of the repository, and \code{pro_1.py} reproduces every figure and number in this paper.
+\end{acknowledgments}
+
+\bibliography{../../common/paper/references}
+
+\appendix
+\section{Mission log}
+\begin{missionbox}{Part 1 key numbers (seed \val{seed})}
+Engine temperature & \val{box-T}\,K \\
+Exhaust speed $u$ & \val{c-u}\,m/s \\
+Engine boxes & \val{n-boxes} \\
+Thrust / fuel use & \val{thrust}\,kN / \val{mdot}\,kg/s \\
+Fuel loaded / left & \val{fuel-loaded}\,t / \val{fuel-left}\,kg \\
+Launch duration & \val{launch-duration}\,s \\
+Height / speed at escape & \val{launch-height}\,km / \val{launch-vr}\,km/s \\
+Gravity loss & \val{gravity-loss}\,km/s \\
+API verification & \val{verified} \\
+\end{missionbox}
+
+\end{document}

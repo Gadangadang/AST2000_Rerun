@@ -25,11 +25,13 @@ from common.paths import use_parts
 use_parts(2)
 
 import ast2000tools.constants as const
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 
 from common.config import get_mission
 from common.plot_style import BLUE, INK, MUTED, ORANGE, PLANET_COLORS, save
+from common.report import record
 from orbits import kepler_state
 
 
@@ -104,6 +106,53 @@ def plot_trilateration(system, time, distances, position, noise_levels, noise_er
     save(fig, "d_trilateration")
 
 
+def error_map(system, time, x, y, relative_noise):
+    """
+    Expected position error [AU] at every point of a grid, for independent relative noise on every distance.
+
+    Linear error propagation through the least-squares solution x = A^+ b, where
+    b_i = |p_i|^2 + d_s^2 - d_i^2: the noise in d_i enters row i, and the noise
+    in d_s enters every row at once (correlated). Cov_b = 4 s^2 (diag(d_i^4) + d_s^4 11^T),
+    Cov_x = A^+ Cov_b A^+^T, error = sqrt(trace). All grid points at once.
+    """
+    planets = kepler_state(system, [time])[0][:, :, 0].T  # (n, 2)
+    pinv = np.linalg.pinv(2 * planets)  # (2, n)
+    points = np.stack([x, y], axis=-1)  # (..., 2)
+    d = np.linalg.norm(points[..., None, :] - planets, axis=-1)  # (..., n)
+    d_s = np.linalg.norm(points, axis=-1)
+    var_planets = np.einsum("in,...n,in->...", pinv, d ** 4, pinv)  # sum_i,n pinv[i,n]^2 d_n^4
+    star_row = pinv.sum(axis=1)  # A^+ 1
+    var_star = np.sum(star_row ** 2) * d_s ** 4
+    return 2 * relative_noise * np.sqrt(var_planets + var_star)
+
+
+def plot_error_map(system, time, position, relative_noise=1e-6):
+    """Where in the system does trilateration work best? (geometric dilution of precision)"""
+    planets = kepler_state(system, [time])[0][:, :, 0].T
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+    for ax, lim in ((ax1, 9), (ax2, 1.6)):
+        g = np.linspace(-lim, lim, 400)
+        X, Y = np.meshgrid(g, g)
+        err = error_map(system, time, X, Y, relative_noise) * const.AU / 1e3
+        im = ax.pcolormesh(X, Y, err, cmap="viridis", norm=matplotlib.colors.LogNorm(), shading="auto")
+        fig.colorbar(im, ax=ax, label=f"expected position error [km] for {relative_noise:g} relative noise")
+        for p in range(system.number_of_planets):
+            ax.plot(*planets[p], "o", color=PLANET_COLORS[p], ms=8, mec="white", mew=1)
+        ax.plot(0, 0, "*", color="#eda100", ms=14, mec=INK, mew=0.5)
+        ax.plot(*position, "x", color="white", ms=12, mew=2.5)
+        ax.set_aspect("equal")
+        ax.set_xlim(-lim, lim)
+        ax.set_ylim(-lim, lim)
+        ax.set_xlabel("x [AU]")
+        ax.set_ylabel("y [AU]")
+        ax.grid(False)
+    ax1.set_title("Whole system: the error grows with distance (all ranges are relative)", fontsize=10)
+    ax2.set_title("Inner system (x: the spacecraft after launch)", fontsize=10)
+    fig.suptitle("D  Trilateration error map at the launch time", fontsize=12)
+    save(fig, "d2_error_map")
+    return error_map(system, time, position[0], position[1], relative_noise) * const.AU / 1e3
+
+
 def main(mission=None):
     """mission: a launched, verified SpaceMission. Without one, a made-up position is used as the test."""
     system = (mission or get_mission()).system
@@ -122,6 +171,12 @@ def main(mission=None):
     noise_levels = np.logspace(-8, -2, 7)
     noise_errors = noise_study(system, time, position, noise_levels)
     plot_trilateration(system, time, distances, position, noise_levels, noise_errors)
+    here = plot_error_map(system, time, position)
+    record("tri-residual", np.abs(residuals).max() * const.AU / 1e3, "{:.2f}")
+    record("tri-pos-x", position[0], "{:.8f}")
+    record("tri-pos-y", position[1], "{:.8f}")
+    record("tri-err-here", here, "{:.0f}")
+    record("tri-noise-limit", noise_levels[np.argmax(noise_errors > 0.01)] if (noise_errors > 0.01).any() else 1e-2, "{:.0e}")
     return position
 
 

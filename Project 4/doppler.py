@@ -33,7 +33,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from common.config import get_mission
-from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, save
+from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, VIOLET, save
+from common.report import record
 
 LAMBDA_0 = 656.3  # H-alpha rest wavelength [nm]
 AU_PER_YR = const.AU / const.yr  # [m/s] per [AU/yr]
@@ -149,6 +150,57 @@ def plot_doppler(mission, velocity, true_velocity=None):
     save(fig, "c_doppler_velocity")
 
 
+def plot_error_budget(mission, velocity, n=4000, seed=10):
+    """
+    How wavelength noise becomes velocity noise. Every 1e-6 nm of shift is
+    c 1e-6 / 656.3 = 0.46 m/s along one star direction; the geometry of the two
+    stars then stretches that into an error ellipse in (v_x, v_y).
+    """
+    rng = np.random.default_rng(seed)
+    angles, sun = mission.star_direction_angles, np.array(mission.star_doppler_shifts_at_sun)
+    shifts = shifts_for_velocity(velocity, sun, angles)
+    precisions = np.logspace(-8, -3, 11)  # [nm]
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5.5))
+    perpendicular = (angles[0], angles[0] + 90)
+    for stars, color, label in ((angles, BLUE, f"our stars ({angles[0]:.0f}$^\\circ$, {angles[1]:.0f}$^\\circ$)"),
+                                (perpendicular, AQUA, "two stars 90$^\\circ$ apart")):
+        base = shifts_for_velocity(velocity, sun, stars)
+        rms = []
+        for sigma in precisions:
+            noisy = base + rng.normal(0, sigma, (500, 2))
+            found = np.array([spacecraft_velocity(x, sun, stars) for x in noisy])
+            rms.append(np.sqrt(np.mean(np.sum((found - velocity) ** 2, axis=1))) * AU_PER_YR)
+        ax1.loglog(precisions, rms, "o-", color=color, ms=4, label=label)
+    ax1.loglog(precisions, const.c * precisions / LAMBDA_0, color=INK, ls="--", lw=1, label=r"$c\,\delta\lambda/\lambda_0$")
+    tolerance = 0.01 * np.linalg.norm(velocity) * AU_PER_YR  # verify_manual_orientation: 1% of |v|
+    ax1.axhline(tolerance, color=ORANGE, lw=1.2)
+    ax1.text(precisions[-1], tolerance, f"API tolerance: 1% of |v| = {tolerance:.0f} m/s ", va="bottom", ha="right",
+             fontsize=9)
+    ax1.set_xlabel("precision of each Doppler-shift measurement [nm]")
+    ax1.set_ylabel("rms velocity error [m/s]")
+    ax1.set_title("Velocity error grows linearly with the wavelength noise; with v = v$_1$u$_1$ + v$_2$u$_2$\n"
+                  "the star geometry does not amplify it", fontsize=10)
+    ax1.legend(fontsize=8, loc="lower right")
+
+    sigma = 1e-4  # [nm], for the ellipse
+    noisy = shifts + rng.normal(0, sigma, (n, 2))
+    found = np.array([spacecraft_velocity(x, sun, angles) for x in noisy])
+    dv = (found - velocity) * AU_PER_YR
+    ax2.plot(dv[:, 0], dv[:, 1], ".", color=BLUE, ms=2, alpha=0.4, label=f"{n} measurements, $\\sigma$ = {sigma:g} nm")
+    U = star_directions(angles)
+    span = np.abs(dv).max()
+    for i, color in enumerate((VIOLET, ORANGE)):
+        ax2.plot([0, U[0, i] * span], [0, U[1, i] * span], color=color, lw=2, label=f"towards star {i + 1}")
+    ax2.set_aspect("equal")
+    ax2.set_xlabel("error in $v_x$ [m/s]")
+    ax2.set_ylabel("error in $v_y$ [m/s]")
+    ax2.set_title("Error ellipse: each star's noise acts along that star's direction", fontsize=10)
+    ax2.legend(fontsize=8, loc="upper left")
+    fig.suptitle("C  Error budget of the Doppler velocity", fontsize=12)
+    save(fig, "c2_doppler_errors")
+    return const.c * 1e-6 / LAMBDA_0
+
+
 def main(mission=None):
     """mission: a launched, verified SpaceMission (Part 1/3). Without one, only the self-tests run."""
     m = mission if mission is not None else get_mission()
@@ -167,6 +219,22 @@ def main(mission=None):
           f" = {np.linalg.norm(velocity) * AU_PER_YR / 1e3:.2f} km/s")
     print(f"      (textbook projection reading would give ({textbook[0]:.4f}, {textbook[1]:.4f}) AU/yr)")
     plot_doppler(mission, velocity)
+    per_micro_nm = plot_error_budget(mission, velocity)
+    textbook_err = np.linalg.norm(textbook - velocity) / np.linalg.norm(velocity)
+    record("star-angle-1", mission.star_direction_angles[0], "{:.1f}")
+    record("star-angle-2", mission.star_direction_angles[1], "{:.1f}")
+    record("star-sep", abs((mission.star_direction_angles[1] - mission.star_direction_angles[0] + 180) % 360 - 180), "{:.1f}")
+    record("sun-v1", sun_v[0], "{:+.1f}")
+    record("sun-v2", sun_v[1], "{:+.1f}")
+    record("v-craft-x", velocity[0], "{:.4f}")
+    record("v-craft-y", velocity[1], "{:.4f}")
+    record("v-craft-kms", np.linalg.norm(velocity) * AU_PER_YR / 1e3, "{:.2f}")
+    record("textbook-err", textbook_err * 100, "{:.0f}")
+    record("ms-per-micro-nm", per_micro_nm, "{:.2f}")
+    # Precision per shift that keeps the rms velocity error (sqrt(2) c sigma / lambda_0) inside 1% of |v|
+    needed = 0.01 * np.linalg.norm(velocity) * AU_PER_YR / (np.sqrt(2) * const.c / LAMBDA_0)
+    record("doppler-precision", needed, "{:.1e}")
+    record("v-tolerance", 0.01 * np.linalg.norm(velocity) * AU_PER_YR, "{:.0f}")
     return velocity
 
 

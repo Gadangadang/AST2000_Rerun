@@ -1,0 +1,219 @@
+% AST2000 Part 2: planetary orbits, Kepler's laws, and what an outside observer would see.
+% Compile: cd "Project 2/paper" && latexmk -pdf part2.tex   (or: python build_papers.py 2 from the repo root)
+% Every number written as \val{key} comes from results.tex, made by pro_2.py.
+\documentclass[aps,prd,twocolumn,nofootinbib,floatfix,superscriptaddress]{revtex4-2}
+\usepackage{../../common/paper/ast2000}
+
+\begin{document}
+
+\title{Part 2: Planetary Orbits, Kepler's Laws, and How Our Planets Look from Afar}
+\author{Sakarias Frette}
+\affiliation{AST2000 Rerun, University of Oslo}
+\date{\today}
+
+\begin{abstract}
+We compute the orbits of the \val{n-planets} planets around our \val{star-mass}\,$\Msun$ star, both analytically and with a leapfrog integrator, over \val{n-home-orbits} orbits of the home planet.
+Using the exact solution of Kepler's equation as the reference, we choose the time step from a measured error curve.
+The worst position error is \val{worst-dev}\%, below the 1\% the official check allows, and \code{ast2000tools} accepted the orbits.
+The simulation obeys Kepler's second law to $\val{area-diff-ecc}$ and the third law to $\val{kepler3-worst}$, and energy along the orbit satisfies the vis-viva law to $\val{visviva-err}$.
+Letting the star move as well, we model what an observer far away would measure.
+The heaviest planet, \val{c1-planet}, moves the star at \val{c1-star-speed}\,m/s, and from a noisy radial-velocity curve we recover $m\sin i$ to \val{c2-eye-err}\%.
+Its transit, with a depth of \val{c3-depth}, gives the planet's radius and its density, \val{c3-rho}\,kg/m$^3$ (true: \val{c3-rho-true}).
+A detectability survey shows that an observer could find the gas giants, but hardly any of the rocky planets.
+As an extra, we measure general-relativistic perihelion precession: our code reproduces Mercury's \val{gr-mercury}$''$ per century.
+\end{abstract}
+
+\maketitle
+
+% =====================================================================
+\section{Introduction}
+Before we can fly anywhere we need to know where the planets are, at any time, accurately enough to aim a spacecraft.
+This part~\cite{ast2000project} builds that knowledge.
+\begin{itemize}
+\item Analytical and numerical orbits, verified by \code{ast2000tools}~\cite{ast2000tools} (\cref{sec:orbits}).
+\item Kepler's laws as tests of the simulation (\cref{sec:kepler}).
+\item The same system seen from outside: the star's wobble, radial velocities and transits (\cref{sec:wobble}).
+\end{itemize}
+We use astronomical units throughout: AU, yr and $\Msun$, in which $G=4\pi^2\AU^3\yr^{-2}\Msun^{-1}$.
+Solar system seed: \val{seed}.
+
+% =====================================================================
+\section{Orbits}\label{sec:orbits}
+\subsection{Theory}
+For a planet that only feels a fixed star of mass $M$, the orbit is a conic section~\cite{ast2000notes},
+\begin{equation}
+  r(\theta)=\frac{a(1-e^2)}{1+e\cos(\theta-\omega)}, \label{eq:ellipse}
+\end{equation}
+with semi-major axis $a$, eccentricity $e$ and perihelion angle $\omega$.
+The position at a given \emph{time} follows from Kepler's equation $M_{\rm anom}=E-e\sin E$.
+Here the mean anomaly grows linearly in time, and $E$ is the eccentric anomaly.
+We solve it with Newton's method for all planets and times at once.
+It is our exact reference.
+
+\subsection{Method}
+We integrate all planets together with the kick--drift--kick leapfrog scheme,
+\begin{align}
+  \vb v_{i+1/2} &= \vb v_i + \tfrac12\vb a(\vb r_i)\Delta t,\nonumber\\
+  \vb r_{i+1}   &= \vb r_i + \vb v_{i+1/2}\Delta t,\\
+  \vb v_{i+1}   &= \vb v_{i+1/2} + \tfrac12\vb a(\vb r_{i+1})\Delta t.\nonumber
+\end{align}
+Leapfrog is symplectic~\cite{hairer2006}, so its energy error stays bounded instead of drifting.
+For a central force it conserves angular momentum exactly.
+Its error is a phase lag that grows linearly in time.
+We measure it as the distance from the exact Kepler position, divided by the distance to the star, which is what the API checks.
+
+\subsection{Results}
+\Cref{fig:analytic,fig:overview} show the system.
+The home planet orbits at $a=\val{home-a}\AU$ with $e=\val{home-e}$ and a period of \val{home-P}\,yr.
+Periods range from \val{fastest-P}\,yr for the innermost planet to \val{slowest-P}\,yr for the outermost.
+The three outer planets are gas giants with densities below 2\,g/cm$^3$.
+The rocky planets have densities of 4--6\,g/cm$^3$.
+
+The time-step study (\cref{fig:dt}) shows the expected $\Delta t^2$ convergence.
+The minimum allowed 10\,000 steps per year would give a worst error of \val{dt-worst-10000}\%, which fails the check, because the innermost planet completes an orbit in only \val{fastest-P}\,yr.
+We therefore use \val{steps-per-year} steps per year.
+Over \val{sim-duration}\,yr this gives a worst error of \val{worst-dev}\% (planet \val{worst-dev-planet}, \cref{fig:poserr}).
+Energy is conserved to $\val{energy-err}$ and angular momentum to $\val{h-err}$ (\cref{fig:conservation}).
+
+\code{ast2000tools} accepted the orbits (\val{verified}).
+Its own Kepler solver crashes at certain sample times, so we handed it every \val{api-thinning}. sample.
+The API then saved the exact orbits, which all later parts use.
+
+\widefig{a1_analytic_orbits}{Analytical orbits from \cref{eq:ellipse}, with the planets' positions at $t=0$.}{fig:analytic}
+\widefig{a3_system_overview}{The system at a glance. Orbital speed against distance; mass against radius with lines of constant density; periods and eccentricities.}{fig:overview}
+\widefig{a2_simulated_orbits}{Simulated orbits (color) on top of the analytical ellipses (dashed).}{fig:sim}
+\colfig{a2_timestep_study}{Worst relative position error against the number of steps per year. Leapfrog converges as $\Delta t^2$.}{fig:dt}
+\widefig{a2_position_error}{Position error against the exact Kepler solution for every planet: a phase lag that grows linearly.}{fig:poserr}
+\widefig{a2_conservation}{Largest relative change in energy and angular momentum per time bin.}{fig:conservation}
+
+% =====================================================================
+\section{Kepler's laws}\label{sec:kepler}
+\subsection{Second law}
+The line from the star to a planet sweeps area at the rate $\dd A/\dd t=|\vb r\times\vb v|/2=h/2$.
+This is constant because the angular momentum $h$ is conserved for any central force.
+We measured the area swept in \val{area-fraction} of an orbit near perihelion and near aphelion (\cref{fig:kepler2}).
+For the most eccentric planet (planet \val{ecc-planet}, $e=\val{ecc-e}$) it moves \val{speed-ratio-ecc} times faster at perihelion.
+Yet the two areas agree to $\val{area-diff-ecc}$.
+
+\subsection{Vis-viva}
+Energy conservation along an ellipse gives $v^2=GM(2/r-1/a)$.
+\Cref{fig:visviva} shows that the simulation follows it to $\val{visviva-err}$.
+This is an independent check of the integrator.
+
+\subsection{Third law}
+Kepler's law with a fixed star, $P^2=a^3/M$, matches our measured periods to $\val{kepler3-worst}$ (\cref{fig:kepler3}).
+Newton's version $P^2=a^3/(M+m)$ differs by a factor of about $1-m/2M$.
+That is only \val{newton-corr}\% even for the heaviest planet (\val{newton-heaviest}), and our fixed-star model cannot see it.
+The two-body simulation in \cref{sec:wobble} does.
+
+\widefig{b1_kepler_second_law}{Kepler's second law. Equal areas swept in equal times near perihelion and aphelion (top). The areal velocity stays constant while the speed varies (bottom).}{fig:kepler2}
+\widefig{b3_vis_viva}{Distance, speed and the vis-viva relation for the most eccentric planet.}{fig:visviva}
+\widefig{b2_kepler_third_law}{Kepler's third law for all planets, and the size of Newton's correction.}{fig:kepler3}
+
+% =====================================================================
+\section{Seen from afar}\label{sec:wobble}
+\subsection{The star's wobble}
+The planet that moves the star the most has the largest $m/\sqrt a$.
+Here that is planet \val{c1-planet}, with $m=\val{c1-mass}\Msun$ at $a=\val{c1-a}\AU$.
+We integrate star and planet together with leapfrog in the centre-of-mass frame.
+The star then moves on a small ellipse of radius \val{c1-wobble-km}\,km at \val{c1-star-speed}\,m/s (\cref{fig:wobble}).
+The two-body energy $\tfrac12\hat\mu v^2-GM\hat\mu/r$ is conserved to $\val{c1-energy-err}$.
+The measured period, \val{c1-P-sim}\,yr, matches Newton's $P^2=a^3/(M+m)$ (\val{c1-P-newton}\,yr).
+Kepler's $a^3/M$ would give \val{c1-P-kepler}\,yr, which is \val{c1-kepler-days} days too long.
+
+\subsection{Radial velocity}
+An observer in the orbital plane's direction at inclination $i=\val{c2-incl}^\circ$ measures $v_r=v_{\rm pec}+v_{\star,x}\sin i$.
+We add a peculiar velocity of \val{c2-vpec}\,m/s and Gaussian noise of \val{c2-noise}\,m/s, and take \val{c2-nobs} measurements.
+We then analyse the curve as an outsider would.
+The mean gives $v_{\rm pec}$, and a smoothed curve gives the period and amplitude.
+For $m\ll M$ on a circular orbit, these give the minimum mass
+\begin{equation}
+  m\sin i = \frac{M^{2/3}\,v_\star\,P^{1/3}}{(2\pi G)^{1/3}}.
+\end{equation}
+By eye we read $P=\val{c2-P-eye}$\,yr and $v_\star=\val{c2-amp-eye}$\,m/s, so $m\sin i=\val{c2-msini-eye}\Msun$ (\cref{fig:rv}).
+The true value is \val{c2-msini-true}, so we are off by \val{c2-eye-err}\%.
+A least-squares sine fit gives \val{c2-msini-fit}.
+
+\subsection{Transit}
+Seen edge-on, the planet blocks a fraction $(R_p/R_\star)^2$ of the star's light.
+We model the flux as a trapezoid with linear ingress and egress, add $\val{c3-noise}$ noise, and fit (\cref{fig:transit}).
+The depth \val{c3-depth} gives $R_p=\val{c3-R-depth}$\,km.
+Combined with the relative speed from the radial-velocity analysis, the \val{c3-ingress-h}-hour ingress gives \val{c3-R-ingress}\,km.
+The true radius is \val{c3-R-true}\,km.
+With the mass from radial velocity, the density is \val{c3-rho}\,kg/m$^3$ (true: \val{c3-rho-true}): a gas giant.
+
+\subsection{Several planets}
+With all three gas giants (planets \val{c4-planets}) in a full $N$-body run of \val{c4-duration}\,yr, the star's velocity is the sum of three wobbles (\cref{fig:multi}).
+We search the noisy curve with a Lomb--Scargle periodogram~\cite{lomb1976}.
+At each round we subtract the strongest sine and search again (``prewhitening''), and at the end we fit all three sines jointly.
+The true periods are \val{c4-true-P}\,yr, and the joint fit gives \val{c4-fit-P}\,yr.
+It recovers the two heaviest giants to within a few percent but misplaces the lightest one.
+That planet (\val{c5-weakest-giant}) moves the star by only \val{c5-weakest-giant-K}\,m/s, much less than the noise per point.
+Over a span of only a few orbits it also blends with the harmonics of the two big signals.
+Separating it would need longer or less noisy observations.
+
+\subsection{Could they find us?}
+\Cref{fig:detect} puts every planet against the noise of our synthetic observations.
+In radial velocity, only planets \val{c5-by-rv} stand out at $5\sigma$ after averaging.
+The home planet moves the star by only \val{c5-home-K}\,cm/s.
+In transit, planets \val{c5-by-transit} are deep enough once a hundred points in transit are averaged.
+But an observer must also be lined up with the orbit, which for the home planet happens with probability $R_\star/a=\val{c5-home-prob}\%$.
+
+\widefig{c1_star_orbit}{The star's wobble around the centre of mass, the two orbits, and energy conservation.}{fig:wobble}
+\widefig{c2_radial_velocity}{Noisy radial-velocity curve, the smoothed curve an observer would read, and the extracted period and amplitude.}{fig:rv}
+\widefig{c3_light_curve}{Light curve of planet \val{c1-planet} crossing the star, with the fitted trapezoid.}{fig:transit}
+\widefig{c4_multi_planet_rv}{Radial velocity with three giants (top) and the prewhitening periodograms (bottom).}{fig:multi}
+\widefig{c5_detectability}{Detectability of every planet by radial velocity (left) and transit (right), against the noise of our synthetic data.}{fig:detect}
+
+% =====================================================================
+\section{Extra: general relativity}
+In Schwarzschild spacetime the orbit equation gains a term $3GMu^2/c^2$ (with $u=1/r$).
+This is a central force $\vb a=-(GM/r^2)(1+3h^2/c^2r^2)\hat{\vb r}$, so leapfrog still conserves $h$ exactly.
+GR rotates the orbit by about $10^{-7}$\,rad per orbit, which is smaller than leapfrog's own numerical precession.
+We therefore run every orbit twice with identical steps, Newtonian and relativistic, and subtract, so the numerical error cancels.
+We track the perihelion with the Laplace--Runge--Lenz vector.
+
+The method reproduces Mercury's \val{gr-mercury}$''$ per century (\cref{fig:gr}).
+For our innermost planet (\val{gr-fast-planet}) it gives \val{gr-fast-meas}$''$ per century (predicted: \val{gr-fast-pred}).
+Over the 20 checked orbits, GR moves the home planet by \val{gr-home-km}\,km.
+That is far less than the planet-planet forces a full $N$-body run adds (\cref{fig:gr2}).
+
+That run also revealed something important.
+Planets \val{nbody-pair} pass only \val{nbody-dist}\,AU apart at $t=\val{nbody-time}$\,yr, so the generated system is dynamically unstable.
+The API, whose truth is Kepler ellipses, ignores this.
+
+\widefig{r1_perihelion_precession}{Measured against predicted GR perihelion precession for all planets and Mercury.}{fig:gr}
+\widefig{r2_size_of_corrections}{Size of the GR and $N$-body corrections compared with our numerical error.}{fig:gr2}
+\colfig{r3_exaggerated_precession}{GR precession made visible by lowering $c$: the orbit becomes a rosette.}{fig:rosette}
+
+% =====================================================================
+\section{Discussion and conclusion}
+Choosing the time step from a measured error, instead of a guess, was the key step.
+The innermost planet sets the requirement, and it needs four times more steps than the minimum allowed.
+Kepler's equation turned out to be valuable well beyond this part.
+It gives exact positions at any time, and Parts 3--5 use it instead of interpolating our own orbits.
+
+The outside view shows how biased planet detection is.
+Heavy, close-in planets dominate radial velocity, large planets dominate transits, and Earth-like planets hide below the noise.
+Our system would look like a three-giant system to most distant observers.
+
+\begin{acknowledgments}
+\code{pro_2.py} reproduces every figure and number; \code{rv_curve.txt} and \code{light_curve.txt} are the synthetic data for the partner group.
+\end{acknowledgments}
+
+\bibliography{../../common/paper/references}
+
+\appendix
+\section{Mission log}
+\begin{missionbox}{Part 2 key numbers (seed \val{seed})}
+Star mass & \val{star-mass}\,$\Msun$ \\
+Home orbit $a$, $e$, $P$ & \val{home-a}\,AU, \val{home-e}, \val{home-P}\,yr \\
+Steps per year & \val{steps-per-year} \\
+Worst position error & \val{worst-dev}\% \\
+API verification & \val{verified} \\
+Kepler 2nd / 3rd law & \val{area-diff-ecc} / \val{kepler3-worst} \\
+RV $m\sin i$ error & \val{c2-eye-err}\% \\
+Transit density & \val{c3-rho}\,kg/m$^3$ \\
+\end{missionbox}
+
+\end{document}

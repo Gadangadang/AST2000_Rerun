@@ -28,7 +28,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from common.config import get_mission
-from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, PLANET_COLORS, save
+from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, PLANET_COLORS, VIOLET, save
+from common.report import record
 from orbits import G, simulate_orbits
 
 N_LONGEST_ORBITS = 2.2  # Simulate long enough for the slowest planet to go around twice
@@ -144,6 +145,44 @@ def plot_third_law(system, periods):
     save(fig, "b2_kepler_third_law")
 
 
+def plot_vis_viva(system, times, positions, velocities, planet):
+    """
+    Distance, speed and the vis-viva law v^2 = GM (2/r - 1/a) for the most eccentric planet.
+
+    Vis-viva is energy conservation written for an ellipse; checking it at
+    every sample tests the simulation independently of the area law.
+    """
+    GM = G * system.star_mass
+    a, e = system.semi_major_axes[planet], system.eccentricities[planet]
+    P = 2 * np.pi * np.sqrt(a ** 3 / GM)
+    span = times <= 2 * P
+    t = times[span] / P
+    r = np.linalg.norm(positions[:, planet, span], axis=0)
+    v2 = np.sum(velocities[:, planet, span] ** 2, axis=0)
+    predicted = GM * (2 / r - 1 / a)
+    fig, axes = plt.subplots(1, 3, figsize=(18, 4.6))
+    axes[0].plot(t, r, color=PLANET_COLORS[planet])
+    for value, name in ((a * (1 - e), "perihelion a(1-e)"), (a * (1 + e), "aphelion a(1+e)")):
+        axes[0].axhline(value, color=INK, ls="--", lw=1)
+        axes[0].text(0, value, f" {name}", va="bottom", fontsize=8)
+    axes[0].set_ylabel("distance r [AU]")
+    axes[0].set_title(f"Planet {planet} (e = {e:.3f}): distance")
+    axes[1].plot(t, np.sqrt(v2), color=PLANET_COLORS[planet], label="simulation")
+    axes[1].plot(t, np.sqrt(predicted), color=INK, ls="--", lw=1, label=r"vis-viva $\sqrt{GM(2/r - 1/a)}$")
+    axes[1].set_ylabel("speed [AU/yr]")
+    axes[1].set_title(f"Speed: {np.sqrt(v2.max() / v2.min()):.3f}x faster at perihelion")
+    axes[1].legend(fontsize=8)
+    axes[2].plot(t, v2 / predicted - 1, color=VIOLET, lw=1)
+    axes[2].ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+    axes[2].set_ylabel(r"$v^2 / GM(2/r - 1/a) - 1$")
+    axes[2].set_title("Vis-viva holds to the integrator's accuracy")
+    for ax in axes:
+        ax.set_xlabel("time [orbits]")
+    fig.suptitle("B3  Vis-viva: energy conservation along an ellipse", fontsize=12)
+    save(fig, "b3_vis_viva")
+    return np.max(np.abs(v2 / predicted - 1)), np.sqrt(v2.max() / v2.min())
+
+
 def main():
     system = get_mission().system
     P = 2 * np.pi * np.sqrt(system.semi_major_axes ** 3 / (G * system.star_mass))
@@ -164,6 +203,15 @@ def main():
         print(f"        area ratio perihelion/aphelion - 1 = {peri['area'] / aph['area'] - 1:.2e}, "
               f"speed ratio = {peri['speed'] / aph['speed']:.4f}")
     plot_second_law(system, times, positions, velocities, planets, results)
+    for p, tag in ((0, "home"), (most_eccentric, "ecc")):
+        peri, aph = results[p]["perihelion"], results[p]["aphelion"]
+        record(f"area-diff-{tag}", abs(peri["area"] / aph["area"] - 1), "{:.1e}")
+        record(f"speed-ratio-{tag}", peri["speed"] / aph["speed"], "{:.4f}")
+    record("ecc-planet", most_eccentric, "{:d}")
+    record("ecc-e", system.eccentricities[most_eccentric], "{:.4f}")
+    record("area-fraction", AREA_FRACTION, "{:.2f}")
+    vv_err, vv_ratio = plot_vis_viva(system, times, positions, velocities, most_eccentric)
+    record("visviva-err", vv_err, "{:.1e}")
 
     periods = measure_periods(times, positions)
     kepler = np.sqrt(system.semi_major_axes ** 3 / system.star_mass)
@@ -173,6 +221,10 @@ def main():
         print(f"      {p:>6}  {system.semi_major_axes[p]:7.3f}  {periods[p]:11.5f}  {kepler[p]:14.5f}  "
               f"{periods[p] / kepler[p] - 1:13.1e}  {newton[p] / kepler[p] - 1:16.1e}")
     plot_third_law(system, periods)
+    record("kepler3-worst", np.max(np.abs(periods / kepler - 1)), "{:.1e}")
+    heaviest = int(np.argmax(system.masses))
+    record("newton-heaviest", heaviest, "{:d}")
+    record("newton-corr", abs(newton[heaviest] / kepler[heaviest] - 1) * 100, "{:.3f}")
 
 
 if __name__ == "__main__":

@@ -21,11 +21,13 @@ import time
 import journey
 import planner
 import trajectory
+from common.report import record_system
 from common.runner import banner
 
 
 def main():
     start = time.perf_counter()
+    record_system()
     banner("A  The trajectory simulator")
     trajectory.main()
     banner("B  Planning the journey")

@@ -40,6 +40,7 @@ import numpy as np
 from ast2000tools.constants import k_B, m_H2
 from part_a_statistics import mb_1d, mb_speed, sample_velocities, sigma_v
 from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, SERIES, VIOLET, save
+from common.report import record
 
 # ------------------------------------------------------------------ parameters
 L = 1e-6  # Box side length [m]
@@ -308,6 +309,46 @@ def plot_scorecard(sim, ana, meas):
     save(fig, "b_scorecard")
 
 
+def plot_walls(sim, ana):
+    """
+    Every wall on its own: hits and pressure.
+
+    The walls do not measure "a gas at 3000 K": they measure THIS sample of N
+    particles, whose <v_i^2> differs from kT/m by ~sqrt(2/N) per axis (bounces
+    never change |v_i|). Predicting each wall from the sample's own velocities
+    shows that the box is exact and only the sample is noisy.
+    """
+    N, L, tau = sim["N"], sim["L"], sim["tau"]
+    v0 = np.abs(sim["initial_velocities"])  # |v_i| never changes in the closed box
+    measured_hits = sim["wall_hits"].sum(axis=0)
+    measured_p = sim["wall_momentum"].sum(axis=0) / (L ** 2 * tau)
+    # Per axis, repeated for the low and high wall: rate = N <|v_i|> / 2L, pressure = N m <v_i^2> / L^3
+    sample_hits = np.repeat(N * tau * v0.mean(axis=0) / (2 * L), 2)
+    sample_p = np.repeat(N * m_H2 * np.mean(v0 ** 2, axis=0) / L ** 3, 2)
+    expected_hits = ana["wall_hit_rate"] * tau
+    x = np.arange(6)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 4.5))
+    panels = ((ax1, measured_hits / expected_hits - 1, sample_hits / expected_hits - 1, np.sqrt((np.pi / 2 - 1) / N),
+               "hits / expected - 1", f"Wall hits in tau = {tau:.0e} s ({expected_hits:,.0f} expected per wall)"),
+              (ax2, measured_p / ana["P"] - 1, sample_p / ana["P"] - 1, np.sqrt(2 / N),
+               "P / nkT - 1", "Pressure on each wall"))
+    for ax, measured, sample, sigma, ylabel, title in panels:
+        ax.axhspan(-sigma, sigma, color=MUTED, alpha=0.15, lw=0, label=r"$\pm1\sigma$ for a new random sample")
+        ax.bar(x, measured, color=[BLUE, BLUE, ORANGE, ORANGE, AQUA, AQUA], width=0.6, label="measured on the wall")
+        ax.plot(x, sample, "_", color=INK, ms=34, mew=2.5, label="predicted from this sample's velocities")
+        ax.axhline(0, color=INK, lw=0.8)
+        ax.set_xticks(x)
+        ax.set_xticklabels(WALL_NAMES)
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+        ax.legend(fontsize=8, loc="upper left")
+    fig.suptitle("B  Each wall measures this particular gas sample: opposite walls agree, and the sample's own "
+                 "<$v_i^2$> predicts the rest", fontsize=11)
+    save(fig, "b_walls")
+    return np.max(np.abs(measured_p / sample_p - 1))
+
+
 def convergence_study():
     """
     How accurate is the simulation, and what controls it?
@@ -387,6 +428,20 @@ def main(convergence=True):
     plot_trajectories(sim)
     plot_pressure_and_hits(sim, ana)
     plot_scorecard(sim, ana, meas)
+    wall_vs_sample = plot_walls(sim, ana)
+    record("box-wall-vs-sample", wall_vs_sample * 100, "{:.2f}")
+    record("box-N", N, "{:.0e}")
+    record("box-L", L * 1e6, "{:g}")  # [micrometre]
+    record("box-T", T, "{:.0f}")
+    record("box-tau", TAU * 1e9, "{:g}")  # [ns]
+    record("box-dt", TAU / N_STEPS * 1e12, "{:g}")  # [ps]
+    record("box-P-sim", meas["P"], "{:.4e}")
+    record("box-P-ana", ana["P"], "{:.4e}")
+    record("box-P-err", abs(meas["P"] / ana["P"] - 1) * 100, "{:.3f}")  # [%]
+    record("box-v-err", abs(meas["<v>"] / ana["<v>"] - 1) * 100, "{:.3f}")
+    record("box-E-err", abs(meas["<E>"] / ana["<E>"] - 1) * 100, "{:.3f}")
+    record("box-hits-err", abs(meas["wall_hit_rate"] / ana["wall_hit_rate"] - 1) * 100, "{:.3f}")
+    record("box-noise", np.sqrt(2 / 3) / np.sqrt(N) * 100, "{:.2f}")
     if convergence:
         convergence_study()
 

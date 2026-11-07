@@ -44,6 +44,7 @@ from scipy import optimize, signal
 from common.config import get_mission
 from common.integrators import leapfrog
 from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, PLANET_COLORS, VIOLET, save
+from common.report import record, record_many
 from orbits import G
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -132,6 +133,12 @@ def run_c1(system):
           f"({(P_kepler - P_sim) * 365.25:.1f} days): Newton's correction is measurable here")
 
     star_speed = np.linalg.norm(vel[:, 0], axis=1) * AU_PER_YR
+    record_many({"c1-planet": (planet, "{:d}"), "c1-mass": (m, "{:.3e}"), "c1-a": (system.semi_major_axes[planet], "{:.2f}"),
+                 "c1-star-speed": (star_speed.mean(), "{:.1f}"),
+                 "c1-energy-err": (np.max(np.abs(energy / energy[0] - 1)), "{:.1e}"),
+                 "c1-P-sim": (P_sim, "{:.4f}"), "c1-P-newton": (P_newton, "{:.4f}"), "c1-P-kepler": (P_kepler, "{:.4f}"),
+                 "c1-kepler-days": ((P_kepler - P_sim) * 365.25, "{:.1f}"),
+                 "c1-wobble-km": (np.ptp(pos[:, 0, 0]) * const.AU / 1e3 / 2, "{:,.0f}")})
     fig, axes = plt.subplots(1, 3, figsize=(17, 5.3))
     ax = axes[0]
     start_frame = pos + r_cm + v_cm * times[:, None, None]  # Undo the CM shift: the frame the star started at rest in
@@ -244,6 +251,7 @@ def run_c2(system, planet, times, vel, rng):
           f"noise sigma = {NOISE_FRACTION * np.max(np.abs(v_true - PECULIAR_VELOCITY)):.1f} m/s -> {os.path.basename(path)}")
 
     result = analyse_rv(t, v_obs, system.star_mass)
+    result["noise"] = NOISE_FRACTION * np.max(np.abs(v_true - PECULIAR_VELOCITY))
     true_m = system.masses[planet]
     print(f"      by eye:  v_pec {result['v_pec']:.1f} m/s, P {result['P_eye']:.3f} yr, amplitude {result['amp_eye']:.2f} m/s"
           f" -> m sin i = {result['m_sin_i_eye']:.3e} Msun")
@@ -252,6 +260,14 @@ def run_c2(system, planet, times, vel, rng):
     print(f"      true: m = {true_m:.3e} Msun, m sin i = {true_m * np.sin(INCLINATION):.3e} Msun "
           f"(eye off by {result['m_sin_i_eye'] / (true_m * np.sin(INCLINATION)) - 1:+.1%})")
     plot_rv(t, v_true, v_obs, result, planet, true_m * np.sin(INCLINATION))
+    record_many({"c2-incl": (np.degrees(INCLINATION), "{:.0f}"), "c2-vpec": (PECULIAR_VELOCITY, "{:.0f}"),
+                 "c2-noise": (NOISE_FRACTION * np.max(np.abs(v_true - PECULIAR_VELOCITY)), "{:.1f}"),
+                 "c2-nobs": (N_OBSERVATIONS, "{:d}"),
+                 "c2-P-eye": (result["P_eye"], "{:.2f}"), "c2-amp-eye": (result["amp_eye"], "{:.1f}"),
+                 "c2-msini-eye": (result["m_sin_i_eye"], "{:.3e}"), "c2-msini-fit": (result["m_sin_i_fit"], "{:.3e}"),
+                 "c2-msini-true": (true_m * np.sin(INCLINATION), "{:.3e}"),
+                 "c2-eye-err": ((result["m_sin_i_eye"] / (true_m * np.sin(INCLINATION)) - 1) * 100, "{:+.1f}"),
+                 "c2-P-fit": (result["P_fit"], "{:.3f}"), "c2-amp-fit": (result["A_fit"], "{:.2f}")})
     return result
 
 
@@ -302,6 +318,11 @@ def run_c3(system, planet, times, pos, vel, rng, mass_estimate):
           f"{v_rel_est / 1e3:.2f} km/s): {R_from_ingress / 1e3:,.0f} km, true {R_p / 1e3:,.0f} km")
     print(f"      density: {rho:.0f} kg/m^3 (true {rho_true:.0f} kg/m^3)")
     home_depth = (system.radii[0] / system.star_radius) ** 2
+    record_many({"c3-depth": (depth, "{:.5f}"), "c3-depth-true": ((R_p / R_star) ** 2, "{:.5f}"),
+                 "c3-noise": (LIGHT_NOISE, "{:.0e}"), "c3-ingress-h": (ingress / 3600, "{:.2f}"),
+                 "c3-R-depth": (R_from_depth / 1e3, "{:,.0f}"), "c3-R-ingress": (R_from_ingress / 1e3, "{:,.0f}"),
+                 "c3-R-true": (R_p / 1e3, "{:,.0f}"), "c3-rho": (rho, "{:.0f}"), "c3-rho-true": (rho_true, "{:.0f}"),
+                 "c3-home-depth": (home_depth, "{:.1e}")})
     print(f"      (our home planet would dip only {home_depth:.1e}, below the {LIGHT_NOISE:.0e} noise per point)")
 
     fig, ax = plt.subplots(figsize=(12, 5))
@@ -377,6 +398,10 @@ def run_c4(system, rng):
     print("      joint fit: " + ", ".join(f"P = {Pk:.2f} yr ({Ak:.1f} m/s)" for Pk, Ak in joint_fit))
     print(f"      residual scatter {np.sqrt(best_cost / len(t)):.1f} m/s vs. noise {noise_sigma:.1f} m/s")
 
+    record("c4-planets", ", ".join(str(p) for p in planets))
+    record("c4-true-P", ", ".join(f"{x:.2f}" for x in sorted(P)))
+    record("c4-fit-P", ", ".join(f"{Pk:.2f}" for Pk, _ in joint_fit))
+    record("c4-duration", duration, "{:.0f}")
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 9))
     ax1.plot(t, v_obs, ".", color=MUTED, ms=2, alpha=0.5, label="observations")
     ax1.plot(t, v_true, color=INK, lw=1.2, label="true total signal")
@@ -401,6 +426,51 @@ def run_c4(system, rng):
     save(fig, "c4_multi_planet_rv")
 
 
+# ======================================================================= C5
+def plot_detectability(system, rv_noise, light_noise=LIGHT_NOISE, n_points=None):
+    """
+    Could an observer far away find each planet on its own? For every planet:
+      RV semi-amplitude  K = (2 pi G / P)^(1/3) m sin i / M^(2/3)   (m << M, circular)
+      transit depth      (R_p / R_star)^2, and the chance the orbit is lined up, R_star / a.
+    A signal is detectable once its size beats the noise averaged over the
+    observations: noise / sqrt(number of points in the signal).
+    """
+    GM = G * system.star_mass
+    a = system.semi_major_axes
+    P = 2 * np.pi * np.sqrt(a ** 3 / GM)
+    m = system.masses * const.m_sun
+    K = (2 * np.pi * const.G / (P * const.yr)) ** (1 / 3) * m * np.sin(INCLINATION) / (system.star_mass * const.m_sun) ** (2 / 3)
+    depth = (system.radii / system.star_radius) ** 2
+    probability = system.star_radius * 1e3 / (a * const.AU)
+    n_points = n_points or N_OBSERVATIONS
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5.5))
+    for p in range(len(a)):
+        size = 11 if system.types[p] == "gas" else 8
+        ax1.loglog(P[p], K[p], "o", color=PLANET_COLORS[p], ms=size, mec=INK, mew=0.5)
+        ax1.annotate(f" {p}", (P[p], K[p]), fontsize=9)
+        ax2.loglog(P[p], depth[p], "o", color=PLANET_COLORS[p], ms=size, mec=INK, mew=0.5)
+        ax2.annotate(f" {p} ({probability[p]:.1%})", (P[p], depth[p]), fontsize=8)
+    ax1.axhline(rv_noise, color=ORANGE, ls="--", lw=1.2, label=f"noise per point in C2: {rv_noise:.1f} m/s")
+    ax1.axhline(rv_noise / np.sqrt(n_points), color=ORANGE, ls=":", lw=1.2,
+                label=f"... averaged over {n_points} points")
+    ax1.axhline(1.0, color=MUTED, ls="-.", lw=1, label="1 m/s (good real spectrograph)")
+    ax1.set_xlabel("orbital period [yr]")
+    ax1.set_ylabel("star's radial-velocity amplitude K [m/s]")
+    ax1.set_title(f"Radial velocity (i = {np.degrees(INCLINATION):.0f}$^\\circ$): only the gas giants stand out")
+    ax1.legend(fontsize=8, loc="lower left")
+    ax2.axhline(light_noise, color=ORANGE, ls="--", lw=1.2, label=f"noise per point in C3: {light_noise:.0e}")
+    ax2.axhline(light_noise / np.sqrt(100), color=ORANGE, ls=":", lw=1.2, label="... averaged over 100 points in transit")
+    ax2.set_xlabel("orbital period [yr]")
+    ax2.set_ylabel("transit depth $(R_p/R_\\star)^2$")
+    ax2.set_title("Transits (label: chance the orbit is lined up, $R_\\star/a$)")
+    ax2.legend(fontsize=8, loc="lower left")
+    fig.suptitle("C5  Which of our planets could extraterrestrials discover?", fontsize=12)
+    save(fig, "c5_detectability")
+    detectable_rv = [p for p in range(len(a)) if K[p] > rv_noise / np.sqrt(n_points) * 5]
+    detectable_tr = [p for p in range(len(a)) if depth[p] > light_noise / np.sqrt(100) * 5]
+    return K, depth, probability, detectable_rv, detectable_tr
+
+
 def main():
     rng = np.random.default_rng(SEED)
     system = get_mission().system
@@ -410,6 +480,16 @@ def main():
     run_c3(system, planet, times, pos, vel, rng,
            {"m": rv["m_sin_i_eye"] / np.sin(INCLINATION), "v_star": rv["amp_eye"] / np.sin(INCLINATION)})
     run_c4(system, rng)
+    K, depth, probability, by_rv, by_transit = plot_detectability(system, rv["noise"])
+    record("c5-home-K", K[0] * 100, "{:.1f}")  # [cm/s]
+    giants = [p for p in range(system.number_of_planets) if system.types[p] == "gas"]
+    weakest = min(giants, key=lambda p: K[p])
+    record("c5-weakest-giant", weakest, "{:d}")
+    record("c5-weakest-giant-K", K[weakest], "{:.1f}")
+    record("c5-max-K", K.max(), "{:.1f}")
+    record("c5-by-rv", ", ".join(map(str, by_rv)) or "none")
+    record("c5-by-transit", ", ".join(map(str, by_transit)) or "none")
+    record("c5-home-prob", probability[0] * 100, "{:.2f}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,174 @@
+% AST2000 Part 4: onboard orientation software (pointing, velocity, position).
+% Compile: cd "Project 4/paper" && latexmk -pdf part4.tex   (or: python build_papers.py 4 from the repo root)
+% Every number written as \val{key} comes from results.tex, made by pro_4.py.
+\documentclass[aps,prd,twocolumn,nofootinbib,floatfix,superscriptaddress]{revtex4-2}
+\usepackage{../../common/paper/ast2000}
+
+\begin{document}
+
+\title{Part 4: Where Are We, and Which Way Are We Going? Onboard Orientation Software}
+\author{Sakarias Frette}
+\affiliation{AST2000 Rerun, University of Oslo}
+\date{\today}
+
+\begin{abstract}
+A spacecraft must find its own state from its instruments.
+We build software that does this right after launch.
+\begin{itemize}
+\item \textbf{Pointing.} We match a camera picture against 360 reference pictures that we project stereographically from a map of the full sky. The tested pointing angles are accurate to \val{pointing-max-err}$^\circ$, and remain within the API's $2^\circ$ tolerance up to pixel noise of $\sigma=\val{pointing-noise-ok}$.
+\item \textbf{Velocity.} We combine the Doppler shifts of two reference stars, which gives \val{v-craft-kms}\,km/s relative to the star.
+\item \textbf{Position.} We trilaterate from the distances to all planets and the star, by a linear least-squares solution that needs no initial guess.
+\end{itemize}
+The software agrees with our own launch prediction to \val{mo-pos-diff}\,km and \val{mo-vel-diff}\,m/s, and \code{ast2000tools} verified it (\val{mo-verified}).
+Along the way we found that the API defines the Doppler measurement differently from the textbook.
+With our star geometry, the textbook reading would be \val{textbook-err}\% off.
+\end{abstract}
+
+\maketitle
+
+% =====================================================================
+\section{Introduction}
+After launch, the spacecraft knows nothing about its state except what its instruments tell it~\cite{ast2000project}.
+It has three instruments:
+\begin{itemize}
+\item a camera, which gives the pointing angle (\cref{sec:pictures});
+\item a spectrograph that measures Doppler shifts, which gives the velocity (\cref{sec:doppler});
+\item a radar that measures distances, which gives the position (\cref{sec:tri}).
+\end{itemize}
+The function \code{orient(mission)} combines all three.
+Part 5 calls it again and again during the journey.
+Solar system seed: \val{seed}.
+
+% =====================================================================
+\section{Pictures of the sky}\label{sec:pictures}
+\subsection{Stereographic projection}
+The sky map is a HEALPix map~\cite{gorski2005} with one colour per direction $(\theta,\phi)$.
+A camera with a $70^\circ$ field of view sees a flat picture: a stereographic projection of a patch of the sphere.
+For a picture centred at $\theta_0=90^\circ$, $\phi_0$, a point $(X,Y)$ in the picture plane maps back to
+\begin{align}
+  \theta &= \frac{\pi}{2}-\arcsin\frac{Y\sin\beta}{\rho}, &
+  \phi &= \phi_0+\arctan\frac{X\sin\beta}{\rho\cos\beta},
+\end{align}
+with $\rho=\sqrt{X^2+Y^2}$ and $\beta=2\arctan(\rho/2)$.
+The API looks up one pixel per call.
+360 full pictures would take $10^8$ calls, so we ported its HEALPix formula to NumPy.
+Our lookup agrees with the API's in all 20\,000 tested directions (\val{hp-mismatch} mismatches).
+Our picture for $\phi_0=0$ equals the course's sample picture up to its added noise, which has a standard deviation of \val{sample-res-std} (\cref{fig:proj}).
+
+\subsection{Finding the pointing angle}
+We compare a picture with reference pictures for $\phi_0=0,1,\ldots,359^\circ$ by the mean squared colour difference.
+We take the best whole degree and refine it with a parabola through its neighbours.
+The key step is to compare the pictures after averaging \val{block}$\times$\val{block} pixel blocks.
+Raw pixels are dominated by sharp stars, and a picture rotated by only half a degree already differs as much as a random one (\cref{fig:robust}, right).
+A library of whole degrees would then have no valley to slide into.
+The blurred pictures keep the bright galactic band, which changes smoothly with angle, and so give one wide minimum.
+
+\subsection{Results}
+The software finds \val{angle-sample0}$^\circ$ for the sample picture, \val{angle-sample200}$^\circ$ for the second sample, and \val{angle-craft}$^\circ$ for the spacecraft's own picture (\cref{fig:pointing}).
+On 20 noisy pictures at random angles the worst error is \val{pointing-max-err}$^\circ$.
+\Cref{fig:robust} shows the noise margin.
+The pointing stays within $2^\circ$ up to pixel noise of $\sigma=\val{pointing-noise-ok}$, far above the noise of \val{sample-res-std} in real pictures.
+It fails only once the noise is comparable to the galactic band's contrast.
+
+\widefig{a_stereographic_projection}{The whole sky (top) with the area a $70^\circ$ picture covers, our projection, the sample picture, and their difference.}{fig:proj}
+\widefig{b_pointing}{A panorama of the reference pictures along the ecliptic, and the match score against angle for each test picture.}{fig:pointing}
+\widefig{b2_pointing_robustness}{Left: pointing error against added pixel noise. Right: match score near the true angle for different block sizes; blurring is what makes a whole-degree library work.}{fig:robust}
+
+% =====================================================================
+\section{Velocity from Doppler shifts}\label{sec:doppler}
+\subsection{Method}
+A source receding at speed $v_r\ll c$ shifts a spectral line by $\Delta\lambda/\lambda_0=v_r/c$, with $\lambda_0=656.3$\,nm (H$\alpha$).
+Two reference stars, at $\phi=\val{star-angle-1}^\circ$ and $\val{star-angle-2}^\circ$, recede from the Sun at \val{sun-v1} and \val{sun-v2}\,m/s.
+The difference between the shifts seen from the Sun and from the spacecraft gives the spacecraft's speed $v_i$ towards each star.
+
+Turning $(v_1,v_2)$ into $(v_x,v_y)$ has two readings.
+\begin{itemize}
+\item The textbook projection, $v_i=\vb v\cdot\hat{\vb u}_i$.
+\item The basis expansion $\vb v=v_1\hat{\vb u}_1+v_2\hat{\vb u}_2$, which is how \code{ast2000tools} generates its data, as we found by reading its source.
+\end{itemize}
+The two agree only for perpendicular stars.
+Ours are \val{star-sep}$^\circ$ apart, and the textbook reading would be \val{textbook-err}\% off (\cref{fig:doppler}).
+
+\subsection{Results}
+Right after launch the spacecraft moves at $(\val{v-craft-x},\val{v-craft-y})\AU/\yr$, which is \val{v-craft-kms}\,km/s.
+Self-tests check three cases:
+\begin{itemize}
+\item the Sun's own shifts give $\vb v=0$;
+\item random velocities survive a round trip through simulated shifts;
+\item both readings agree for perpendicular stars.
+\end{itemize}
+
+The error budget (\cref{fig:dopplererr}) is simple.
+Every $10^{-6}$\,nm of wavelength error is \val{ms-per-micro-nm}\,m/s along one star direction.
+With the API's basis expansion, the geometry of the stars does not amplify this.
+To stay within the API's tolerance of 1\% of $|\vb v|$ (\val{v-tolerance}\,m/s), each shift must be measured to better than \val{doppler-precision}\,nm.
+
+\widefig{c_doppler_velocity}{Left: the velocity built from the two star directions. Right: error of the textbook reading against the angle between the stars.}{fig:doppler}
+\widefig{c2_doppler_errors}{Left: velocity error against the precision of the Doppler measurement. Right: the error ellipse for $10^{-4}$\,nm noise.}{fig:dopplererr}
+
+% =====================================================================
+\section{Position by trilateration}\label{sec:tri}
+\subsection{Method}
+At time $t$ the planets' positions $\vb p_i$ are known exactly from Kepler's equation (Part 2), and the star sits at the origin.
+The radar gives the distance $d_i$ to every planet and $d_s$ to the star:
+\begin{equation}
+  |\vb x-\vb p_i|^2=d_i^2, \qquad |\vb x|^2=d_s^2.
+\end{equation}
+Subtracting the star's equation from each planet's removes $|\vb x|^2$, the only nonlinear term:
+\begin{equation}
+  2\vb p_i\cdot\vb x = |\vb p_i|^2+d_s^2-d_i^2. \label{eq:tri}
+\end{equation}
+This gives eight linear equations in two unknowns, solved by least squares in one step, without iteration or an initial guess.
+
+\subsection{Results}
+The position right after launch is $(\val{tri-pos-x},\val{tri-pos-y})\AU$, with all residuals below \val{tri-residual}\,km (\cref{fig:tri}).
+The radar's errors are proportional to distance.
+Propagating them through \cref{eq:tri} gives the error map in \cref{fig:trimap}: about \val{tri-err-here}\,km per $10^{-6}$ relative noise where the spacecraft is.
+Of the noise levels we tested, it first leaves the API's 0.01\,AU tolerance at a relative noise of \val{tri-noise-limit}.
+
+\widefig{d_trilateration}{Every distance is a circle around its planet; all of them cross at the spacecraft. Right: error against noise.}{fig:tri}
+\widefig{d2_error_map}{Expected position error across the system for $10^{-6}$ relative noise on every distance, from linear error propagation through the least-squares solution.}{fig:trimap}
+
+% =====================================================================
+\section{Manual orientation}
+With the three parts combined, the spacecraft finds the following (\cref{fig:mo}):
+\begin{itemize}
+\item pointing angle \val{mo-angle}$^\circ$;
+\item velocity $(\val{v-craft-x},\val{v-craft-y})\AU/\yr$;
+\item position $(\val{tri-pos-x},\val{tri-pos-y})\AU$.
+\end{itemize}
+These come from instruments only.
+Our launch simulation (Parts 1 and 3) predicted a state that agrees to \val{mo-pos-diff}\,km and \val{mo-vel-diff}\,m/s.
+\code{ast2000tools} verified all three (\val{mo-verified}).
+The \val{mo-vel-diff}\,m/s difference is the API's Euler-integrated launch against our adaptive one.
+Over a four-month journey it would grow to a large miss, which is why Part 5 re-aims from the measured state.
+
+\widefig{e_orientation_summary}{Manual orientation. The spacecraft's picture, our projection at the angle found, and their difference. Below: onboard fix against launch prediction, with the API's tolerances.}{fig:mo}
+
+% =====================================================================
+\section{Discussion and conclusion}
+Each instrument has a clear error model:
+\begin{itemize}
+\item the pointing is limited by the contrast of the galactic band;
+\item the velocity by the spectrograph's precision;
+\item the position by the radar's relative precision and the planets' geometry.
+\end{itemize}
+In all three cases our margins are large.
+The most important finding was the Doppler convention.
+Following the assignment's formula would have failed verification with our stars, and only reading the API's source revealed why.
+
+\bibliography{../../common/paper/references}
+
+\appendix
+\section{Mission log}
+\begin{missionbox}{Part 4 key numbers (seed \val{seed})}
+Pointing after launch & \val{mo-angle}$^\circ$ \\
+Velocity & (\val{v-craft-x}, \val{v-craft-y})\,AU/yr \\
+Position & (\val{tri-pos-x}, \val{tri-pos-y})\,AU \\
+vs.\ launch prediction & \val{mo-pos-diff}\,km, \val{mo-vel-diff}\,m/s \\
+Worst pointing error (tests) & \val{pointing-max-err}$^\circ$ \\
+Textbook Doppler error & \val{textbook-err}\% \\
+API verification & \val{mo-verified} \\
+\end{missionbox}
+
+\end{document}

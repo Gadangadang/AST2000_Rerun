@@ -54,6 +54,7 @@ from scipy import integrate
 
 from common.config import get_mission
 from common.plot_style import BLUE, INK, MUTED, ORANGE, PLANET_COLORS, save
+from common.report import record
 from orbits import G, kepler_state
 
 DT_TABLE = 1e-4  # Ephemeris grid step [yr] (~53 min), Hermite interpolation
@@ -292,6 +293,15 @@ def main():
     for n, per in batch_results:
         print(f"      batch of {n:>3} spacecraft: {per * 1e3:7.1f} ms per spacecraft")
     plot_tests(system, steps, eph_errors, kepler_results, batch_results, cost)
+    record("eph-dt-min", DT_TABLE * 365.25 * 24 * 60, "{:.0f}")
+    record("eph-err-hermite", eph_errors["hermite"][i].max() * 1e3, "{:.3g}")  # [m]
+    record("eph-err-linear", eph_errors["linear"][i].max() * 1e3, "{:.3g}")
+    record("kepler-err-km", kepler_results[-1][1], "{:.2g}")
+    record("rtol", RTOL, "{:.0e}")
+    record("linear-evals", cost["linear"][0], "{:,}")
+    record("hermite-evals", cost["hermite"][0], "{:,}")
+    record("batch-speedup", batch_results[0][1] / batch_results[-1][1], "{:.0f}")
+    record("batch-max", batch_results[-1][0], "{:d}")
 
 
 if __name__ == "__main__":

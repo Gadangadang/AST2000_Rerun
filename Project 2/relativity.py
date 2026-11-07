@@ -49,6 +49,7 @@ import numpy as np
 from common.config import get_mission
 from common.integrators import leapfrog
 from common.plot_style import BLUE, INK, MUTED, ORANGE, PLANET_COLORS, save
+from common.report import record
 from orbits import G, N_HOME_ORBITS, STEPS_PER_YEAR, kepler_positions, relative_deviation, simulate_orbits
 from star_wobble import simulate_nbody, star_and_planets
 
@@ -311,6 +312,12 @@ def main():
               f"{res['measured'][i] / res['predicted'][i] - 1:+.1e}   {res['spurious'][i] * scale:+12.4f}")
     fast = int(np.argmin(system.semi_major_axes))
     plot_precession(res, fast)
+    merc = len(res["names"]) - 1 if res["names"][-1].lower().startswith("merc") else None
+    if merc is not None:
+        record("gr-mercury", res["measured"][merc] * res["century"][merc] * ARCSEC, "{:.2f}")
+    record("gr-fast-planet", fast, "{:d}")
+    record("gr-fast-pred", res["predicted"][fast] * res["century"][fast] * ARCSEC, "{:.1f}")
+    record("gr-fast-meas", res["measured"][fast] * res["century"][fast] * ARCSEC, "{:.1f}")
 
     print(f"R2    {N_HOME_ORBITS} home orbits: Newton, GR and full N-body (~20 s) ...")
     times, numerical, gr_shift, nbody_shift, helio, newton = compare_corrections(system)
@@ -321,6 +328,10 @@ def main():
               f"{nbody_shift[p].max():.1e}           {numerical[p].max():.1e}")
     dist, i, j, k = closest_encounter(helio)
     print(f"      N-body: planets {i} and {j} pass {dist:.4f} AU apart at t = {times[k]:.2f} yr")
+    record("gr-home-km", gr_shift[0].max() * radius_km[0], "{:.0f}")
+    record("nbody-pair", f"{i} and {j}")
+    record("nbody-dist", dist, "{:.3f}")
+    record("nbody-time", times[k], "{:.1f}")
     plot_corrections(system, times, numerical, gr_shift, nbody_shift, helio, newton)
 
     factor, measured, exact = plot_rosette(system)

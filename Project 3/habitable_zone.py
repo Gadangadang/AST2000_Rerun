@@ -33,8 +33,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from common.config import get_mission
-from common.plot_style import AQUA, BLUE, INK, MUTED, PLANET_COLORS, save
-from orbits import analytic_orbit
+from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, PLANET_COLORS, save
+from common.report import record, record_many
+from orbits import analytic_orbit, kepler_state
 
 T_WATER = (260.0, 390.0)  # Liquid water at the surface [K]
 T_MARGIN = 15.0  # The assignment's +-15 K uncertainty on those limits
@@ -150,6 +151,50 @@ def plot_zone_map(system, star):
     save(fig, "1b_habitable_zone_map", rect=(0, 0, 1, 0.96))
 
 
+def plot_solar_power(system, star, destination):
+    """
+    Power for the lander: panel area against distance, and how the destination's
+    flux and temperature change over its year (its orbit is not quite circular).
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    r = np.logspace(np.log10(0.1), np.log10(10), 300)
+    hz = habitable_zone(star)
+    ax1.loglog(r, panel_area(flux(star.T, star.R, r)), color=INK, lw=1.5,
+               label=f"A = {PANEL_POWER:.0f} W / ({PANEL_EFFICIENCY:.0%} x F)")
+    ax1.axvspan(*hz, color=AQUA, alpha=0.2, lw=0, label="habitable zone")
+    for p in range(system.number_of_planets):
+        a = system.semi_major_axes[p]
+        ax1.plot(a, panel_area(flux(star.T, star.R, a)), "o", color=PLANET_COLORS[p], ms=9, mec=INK, mew=0.5)
+        ax1.annotate(f" {p}", (a, panel_area(flux(star.T, star.R, a))), fontsize=9)
+    ax1.set_xlabel("distance from the star [AU]")
+    ax1.set_ylabel("solar panel area [m$^2$]")
+    area_hz = panel_area(flux(star.T, star.R, np.array(hz)))
+    ax1.set_title(f"Panel area grows as $r^2$: {area_hz[0]:.2f}-{area_hz[1]:.2f} m$^2$ across the zone")
+    ax1.legend(fontsize=8)
+
+    P = 2 * np.pi * np.sqrt(system.semi_major_axes[destination] ** 3 / (const.G_sol * system.star_mass))
+    t = np.linspace(0, P, 400)
+    d = np.linalg.norm(kepler_state(system, t)[0][:, destination], axis=0)
+    F = flux(star.T, star.R, d)
+    T = planet_temperature(star.T, star.R, d)
+    ax2.plot(t / P, F, color=ORANGE)
+    ax2.set_xlabel("time [destination years]")
+    ax2.set_ylabel("flux at the planet [W/m$^2$]")
+    # Energy balance F pi R^2 = sigma T^4 4 pi R^2 makes T a function of F alone: a second scale, not a second curve
+    sigma = const.sigma
+    right = ax2.secondary_yaxis("right", functions=(lambda F: (np.maximum(F, 1e-9) / (4 * sigma)) ** 0.25,
+                                                     lambda T: 4 * sigma * T ** 4))
+    right.set_ylabel("equilibrium temperature $(F/4\\sigma)^{1/4}$ [K]")
+    i_peri = np.argmax(F)
+    ax2.annotate("perihelion", (t[i_peri] / P, F[i_peri]), xytext=(0, -18), textcoords="offset points", ha="center",
+                 fontsize=8, color=MUTED)
+    ax2.set_title(f"Planet {destination} over one orbit: flux {F.min():.0f}-{F.max():.0f} W/m$^2$, "
+                  f"T {T.min():.0f}-{T.max():.0f} K")
+    fig.suptitle("1  Power and climate for the lander", fontsize=12)
+    save(fig, "1c_solar_power")
+    return F, T
+
+
 def main():
     system = get_mission().system
     star = Star(system)
@@ -168,6 +213,23 @@ def main():
               f"{table['panel'][p]:10.2f}   {'YES' if inside else ('edge (within 15 K)' if edge else 'no')}")
     plot_temperature(system, star, table)
     plot_zone_map(system, star)
+    record_many({"star-T": (star.T, "{:.0f}"), "star-R": (system.star_radius, "{:,.0f}"),
+                 "star-Rsun": (system.star_radius / 6.957e5, "{:.2f}"), "star-L": (star.L / const.L_sun, "{:.2f}"),
+                 "hz-in": (hz[0], "{:.2f}"), "hz-out": (hz[1], "{:.2f}"),
+                 "hz-wide-in": (hz_wide[0], "{:.2f}"), "hz-wide-out": (hz_wide[1], "{:.2f}"),
+                 "T-water-lo": (T_WATER[0], "{:.0f}"), "T-water-hi": (T_WATER[1], "{:.0f}"),
+                 "T-margin": (T_MARGIN, "{:.0f}"), "panel-power": (PANEL_POWER, "{:.0f}"),
+                 "panel-eff": (PANEL_EFFICIENCY * 100, "{:.0f}"),
+                 "T-home": (table["T"][0], "{:.0f}")})
+    inside = [p for p in np.argsort(system.semi_major_axes) if hz[0] <= table["a"][p] <= hz[1]]
+    record("hz-planets", ", ".join(map(str, inside)) or "none")
+    from destination import get_destination  # Here, not at the top: destination.py imports this module
+    dest = get_destination(system)
+    F, T = plot_solar_power(system, star, dest)
+    record_many({"dest-T": (table["T"][dest], "{:.0f}"), "dest-T-min": (T.min(), "{:.0f}"),
+                 "dest-T-max": (T.max(), "{:.0f}"),
+                 "dest-F-min": (F.min(), "{:.0f}"), "dest-F-max": (F.max(), "{:.0f}"), "dest-flux": (table["flux"][dest], "{:.0f}"),
+                 "dest-panel": (table["panel"][dest], "{:.2f}")})
     return star, table
 
 

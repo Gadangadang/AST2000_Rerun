@@ -45,6 +45,7 @@ from ast2000tools.constants import k_B, m_H2
 from gas_box import analytical, initial_state, mirror, move
 from part_a_statistics import sample_velocities, sigma_v
 from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, VIOLET, save
+from common.report import record
 
 # ------------------------------------------------------------------ parameters
 L = 1e-6  # Box side length [m]
@@ -282,6 +283,8 @@ def compare_refill_methods(tau=TAU):
         ax1.plot(t_bin * 1e9, thrust / ideal["thrust"], "o-", ms=3, lw=1.5, color=color, label=label)
         ax2.plot(sim["time"] * 1e9, sim["temperature"], lw=1.5, color=color, label=label)
         perf = engine_performance(sim)
+        record(f"c-ratio-{method}", perf["thrust"] / ideal["thrust"], "{:.3f}")
+        record(f"c-Tend-{method}", sim["temperature"][-1], "{:.0f}")
         print(f"      {method:<9} thrust ratio {perf['thrust'] / ideal['thrust']:.3f}, "
               f"final temperature {sim['temperature'][-1]:.0f} K")
     ax1.axhline(1, color=MUTED, lw=1, ls=":")
@@ -314,12 +317,24 @@ def main(compare=True):
               f"ratio = {perf[key] / ideal[key]:.3f}")
     print(f"      mean gas temperature after burn-in = {np.mean(sim['temperature'][sim['time'] > BURN_IN]):.1f} K")
 
+    record("c-thrust-box", perf["thrust"], "{:.3e}")
+    record("c-mdot-box", perf["mass_loss_rate"], "{:.3e}")
+    record("c-u", perf["exhaust_speed"], "{:.0f}")
+    record("c-u-ideal", ideal["exhaust_speed"], "{:.0f}")
+    record("c-thrust-ratio", perf["thrust"] / ideal["thrust"], "{:.3f}")
+    record("c-rate-ratio", perf["rate"] / ideal["rate"], "{:.3f}")
+    record("c-escaped", perf["escaped_in_average"], "{:,}")
+    record("c-stat-err", perf["relative_statistical_error"] * 100, "{:.2f}")
+    record("c-hole", HOLE_AREA_FRACTION, "{:g}")
+    record("c-tau", TAU * 1e9, "{:g}")
+    record("c-burn-in", BURN_IN * 1e9, "{:g}")
     with open(RESULT_FILE, "w") as f:
         json.dump({"parameters": {"N": N, "L": L, "T": T, "hole_area_fraction": HOLE_AREA_FRACTION, "tau": TAU,
                                   "n_steps": N_STEPS, "burn_in": BURN_IN, "refill": REFILL, "seed": SEED},
                    "thrust_per_box": perf["thrust"],
                    "mass_loss_rate_per_box": perf["mass_loss_rate"],
-                   "exhaust_speed": perf["exhaust_speed"]}, f, indent=2)
+                   "exhaust_speed": perf["exhaust_speed"],
+                   "relative_statistical_error": perf["relative_statistical_error"]}, f, indent=2)
     print(f"      -> {os.path.basename(RESULT_FILE)}")
 
     plot_time_series(sim, perf, ideal)

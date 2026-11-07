@@ -51,7 +51,8 @@ import numpy as np
 from ast2000tools.space_mission import SpaceMission
 from PIL import Image
 
-from common.plot_style import BLUE, INK, MUTED, ORANGE, save
+from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, SERIES, VIOLET, save
+from common.report import record
 
 SKY_FILE = os.path.join(HERE, "himmelkule.npy")
 SAMPLE_FILES = {0.0: os.path.join(HERE, "sample0000.png")}  # Pictures with a known pointing angle
@@ -61,6 +62,7 @@ FOV = np.radians(70)  # Field of view, both directions
 WIDTH, HEIGHT = 640, 480  # Picture size [pixels]
 BLOCK = 8  # Pictures are compared as averages of 8 x 8 pixel blocks
 NSIDE = 512  # HEALPix resolution of himmelkule.npy
+GRIDLINE = "#d8d7d2"
 
 
 # ===================================================================== sky map
@@ -237,6 +239,60 @@ def plot_pointing(sky, library, tests):
     save(fig, "b_pointing")
 
 
+def plot_pointing_robustness(sky, library, noise_levels=(0, 4, 16, 32, 64, 128), n_angles=12, seed=9):
+    """
+    How good is the pointing software? (1) Error against picture noise, at
+    random angles between the library's whole degrees. (2) Why we blur: the
+    match score near the true angle for different block sizes. Raw pixels give
+    a narrow, ragged valley that a whole-degree library cannot find; blocks of
+    8 x 8 give one smooth, wide valley.
+    """
+    rng = np.random.default_rng(seed)
+    angles = rng.uniform(0, 360, n_angles)
+    clean = [make_picture(sky, np.radians(a)) for a in angles]
+    worst, median = [], []
+    for sigma in noise_levels:
+        errors = []
+        for a, picture in zip(angles, clean):
+            noisy = np.clip(picture + rng.normal(0, sigma, picture.shape), 0, 255).astype(np.uint8)
+            found, _ = find_pointing(noisy, library)
+            errors.append(abs((found - a + 180) % 360 - 180))
+        worst.append(max(errors))
+        median.append(np.median(errors))
+
+    directions = picture_directions()
+    centre = 123.0  # Any angle; the shape of the valley is what matters
+    reference = make_picture(sky, np.radians(centre), directions)
+    offsets = np.linspace(-6, 6, 97)
+    pictures = [make_picture(sky, np.radians(centre + o), directions) for o in offsets]
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+    ax1.semilogy(noise_levels, np.maximum(worst, 1e-3), "o-", color=ORANGE, label="worst of the test angles")
+    ax1.semilogy(noise_levels, np.maximum(median, 1e-3), "o-", color=BLUE, label="median")
+    ax1.axhline(2, color=INK, ls="--", lw=1.2)
+    ax1.text(noise_levels[0], 2, " API tolerance: 2$^\\circ$", va="bottom", fontsize=9)
+    ax1.axvline(4, color=MUTED, ls=":", lw=1)
+    ax1.text(4, ax1.get_ylim()[0] * 1.5, " noise in the\n sample pictures", fontsize=8, color=MUTED)
+    ax1.set_xlabel("Gaussian noise added to every pixel (0-255 scale)")
+    ax1.set_ylabel("pointing error [deg]")
+    ax1.set_title(f"Robust far beyond the real noise ({n_angles} random angles per level)", fontsize=10)
+    ax1.legend(fontsize=8, loc="center right")
+    for block, color in zip((1, 2, 8, 32), (MUTED, AQUA, BLUE, VIOLET)):
+        ref = blur(reference, block) if block > 1 else reference.astype(np.float64)
+        scores = np.array([np.mean(((blur(p, block) if block > 1 else p.astype(np.float64)) - ref) ** 2)
+                           for p in pictures])
+        ax2.plot(offsets, scores / scores.max(), color=color, lw=2 if block == BLOCK else 1.3,
+                 label=f"{block} x {block} blocks" + ("  (used)" if block == BLOCK else ""))
+    for x in range(-6, 7):
+        ax2.axvline(x, color=GRIDLINE, lw=0.6, zorder=0)
+    ax2.set_xlabel("picture angle minus true angle [deg] (grey lines: the library's whole degrees)")
+    ax2.set_ylabel("match score (normalised)")
+    ax2.set_title("Why blur: raw pixels decorrelate within ~0.5$^\\circ$, blocks keep a smooth valley", fontsize=10)
+    ax2.legend(fontsize=8, loc="lower right")
+    fig.suptitle("B  How reliable is the pointing software?", fontsize=12)
+    save(fig, "b2_pointing_robustness")
+    return dict(zip(noise_levels, worst))
+
+
 def main(extra_pictures=()):
     """extra_pictures: (name, path) of pictures to analyse as well (e.g. the spacecraft's own)."""
     if not os.path.exists(SKY_FILE):
@@ -282,6 +338,17 @@ def main(extra_pictures=()):
         errors.append(abs((angle - angle_true + 180) % 360 - 180))
     print(f"      20 noisy test pictures at random angles: largest error {max(errors):.2f} deg (API allows 2 deg)")
     plot_pointing(sky, library, tests)
+    worst_by_noise = plot_pointing_robustness(sky, library)
+    record("hp-mismatch", mismatches, "{:d}")
+    record("sample-res-std", residual.std(), "{:.1f}")
+    record("pointing-max-err", max(errors), "{:.2f}")
+    record("pointing-err-64", worst_by_noise[64], "{:.2f}")
+    record("pointing-noise-ok", max(k for k, v in worst_by_noise.items() if v < 2), "{:d}")
+    record("pointing-err-128", worst_by_noise[128], "{:.2f}")
+    record("block", BLOCK, "{:d}")
+    for name, angle, _ in tests:
+        key = {"sample0000.png": "angle-sample0", "sample0200.png": "angle-sample200"}.get(name, "angle-craft")
+        record(key, angle, "{:.2f}")
     return sky, library, {name: angle for name, angle, _ in tests}
 
 

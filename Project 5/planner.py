@@ -50,7 +50,8 @@ import numpy as np
 
 from common.config import get_mission
 from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, PLANET_COLORS, VIOLET, save
-from destination import capture_distance, get_destination
+from common.report import record, record_many
+from destination import capture_distance, get_destination, hohmann
 from generalised_launch import design, launch_state
 from lambert import lambert
 from launch import HomePlanet
@@ -425,6 +426,53 @@ def plot_budget(ctx, plan):
     return fuel
 
 
+def plot_trades(ctx, plan):
+    """
+    Two choices the planner makes, and why. (1) Capture: the burn to circularise
+    at radius r after falling in from v_inf is sqrt(v_inf^2 + 2GM/r) - sqrt(GM/r),
+    smallest at r = 2GM/v_inf^2. (2) Departure: burning right after launch, at
+    escape speed deep in the home planet's well, against burning far away.
+    """
+    choice = plan.porkchop_choice
+    v_inf_arr = choice["v_inf_arr"] * AU_PER_YR
+    GM = const.G * ctx.system.masses[ctx.destination] * const.m_sun
+    R = ctx.system.radii[ctx.destination] * 1e3
+    r = np.logspace(np.log10(R), np.log10(capture_distance(ctx.system, ctx.destination,
+                                                           ctx.system.semi_major_axes[ctx.destination]) * const.AU), 400)
+    dv_capture = np.sqrt(v_inf_arr ** 2 + 2 * GM / r) - np.sqrt(GM / r)
+    r_best = 2 * GM / v_inf_arr ** 2
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5.2))
+    ax1.semilogx(r / R, dv_capture, color=INK, label=f"falling in at $v_\\infty$ = {v_inf_arr / 1e3:.2f} km/s")
+    ax1.axvline(r_best / R, color=MUTED, ls=":", lw=1.2, label=f"optimum $2GM/v_\\infty^2$ = {r_best / R:.1f} radii")
+    ax1.axvline(MIN_ORBIT_RADII, color=ORANGE, ls="--", lw=1.2, label=f"lowest allowed ({MIN_ORBIT_RADII:.0f} radii)")
+    ax1.plot(plan.r_orbit * KM * 1e3 / R, np.linalg.norm(plan.dv_injection) * AU_PER_YR, "*", color=VIOLET, ms=16,
+             mec=INK, label=f"our orbit: {plan.r_orbit * KM:,.0f} km")
+    ax1.set_xlabel("circular orbit radius [planet radii]")
+    ax1.set_ylabel("capture burn [m/s]")
+    ax1.set_title("Capture: a low orbit costs more, and so does a high one", fontsize=10)
+    ax1.legend(fontsize=8)
+
+    v_inf = np.linspace(0, 8e3, 300)
+    v_esc = ctx.escape_speed_after_launch() * AU_PER_YR
+    v_esc_surface = ctx.home.v_esc
+    ax2.plot(v_inf / 1e3, v_inf / 1e3, color=MUTED, ls="--", label="burn far from the planet: $\\Delta v = v_\\infty$")
+    ax2.plot(v_inf / 1e3, (np.sqrt(v_inf ** 2 + v_esc ** 2) - v_esc) / 1e3, color=BLUE,
+             label=f"burn right after launch (at {v_esc / 1e3:.2f} km/s)")
+    ax2.plot(v_inf / 1e3, (np.sqrt(v_inf ** 2 + v_esc_surface ** 2) - v_esc_surface) / 1e3, color=AQUA, lw=1.2,
+             label="ideal: at the surface")
+    v_dep = choice["v_inf_dep"] * AU_PER_YR
+    ax2.plot(v_dep / 1e3, np.linalg.norm(plan.dv_boost) * AU_PER_YR / 1e3, "*", color=VIOLET, ms=16, mec=INK,
+             label=f"our departure: {np.linalg.norm(plan.dv_boost) * AU_PER_YR:,.0f} m/s for {v_dep / 1e3:.2f} km/s")
+    ax2.set_xlabel("$v_\\infty$ needed far from the home planet [km/s]")
+    ax2.set_ylabel("departure burn [km/s]")
+    ax2.set_title(f"Oberth effect: the burn after launch saves {(v_dep - np.linalg.norm(plan.dv_boost) * AU_PER_YR) / 1e3:.1f} km/s",
+                  fontsize=10)
+    ax2.legend(fontsize=8)
+    fig.suptitle("B  Two trades: where to orbit, and where to burn", fontsize=12)
+    save(fig, "b7_trades")
+    return r_best
+
+
 def sensitivity(ctx, plan, n_points=25, h=1e-6):
     """How far the arrival point moves per m/s of velocity error, for errors at different times on the way."""
     _, r0, v0, _ = launch_state(ctx.launch, ctx.home, ctx.system, plan.t_launch, plan.launch_angle)
@@ -484,6 +532,31 @@ def main(ctx=None):
     print(f"      sensitivity: 1 m/s error right after launch -> {km_per_ms[0]:,.0f} km miss; "
           f"halfway -> {km_per_ms[len(km_per_ms) // 2]:,.0f} km; a day before arrival -> {km_per_ms[-1]:,.0f} km")
     print(f"      fuel: {fuel[0]:,.0f} kg + {fuel[1]:,.0f} kg -> {ctx.fuel_after_launch - fuel.sum():,.0f} kg left")
+    r_best = plot_trades(ctx, plan)
+    v = lambda x: np.linalg.norm(x) * AU_PER_YR
+    record_many({
+        "dest": (ctx.destination, "{:d}"), "u": (ctx.exhaust_speed, "{:,.0f}"),
+        "fuel-after-launch": (ctx.fuel_after_launch, "{:,.0f}"), "grid": (GRID, "{:d}"),
+        "window-lo": (LAUNCH_WINDOW[0], "{:g}"), "window-hi": (LAUNCH_WINDOW[1], "{:g}"),
+        "porkchop-min": (np.nanmin(chart["dv"]) * AU_PER_YR / 1e3, "{:.2f}"),
+        "t-launch": (plan.t_launch, "{:.4f}"), "travel-days": (choice["t_travel"] * 365.25, "{:.0f}"),
+        "launch-angle": (np.degrees(plan.launch_angle), "{:.1f}"),
+        "vinf-dep": (choice["v_inf_dep"] * AU_PER_YR / 1e3, "{:.2f}"),
+        "vinf-arr": (choice["v_inf_arr"] * AU_PER_YR / 1e3, "{:.2f}"),
+        "pc-dv-dep": (choice["dv_dep"] * AU_PER_YR, "{:,.0f}"), "pc-dv-arr": (choice["dv_arr"] * AU_PER_YR, "{:,.0f}"),
+        "plan-boost": (v(plan.dv_boost), "{:,.1f}"), "plan-inj": (v(plan.dv_injection), "{:,.0f}"),
+        "plan-total": ((v(plan.dv_boost) + v(plan.dv_injection)) / 1e3, "{:.2f}"),
+        "guess-off": (v(plan.dv_boost - choice["dv_guess"]), "{:.1f}"),
+        "r-orbit": (plan.r_orbit * KM, "{:,.0f}"), "r-orbit-radii": (plan.r_orbit * KM / ctx.system.radii[ctx.destination], "{:.1f}"),
+        "r-best-radii": (r_best / (ctx.system.radii[ctx.destination] * 1e3), "{:.1f}"),
+        "plan-fuel-dep": (fuel[0], "{:,.0f}"), "plan-fuel-inj": (fuel[1], "{:,.0f}"),
+        "plan-fuel-left": (ctx.fuel_after_launch - fuel.sum(), "{:,.0f}"),
+        "sens-start": (km_per_ms[0], "{:,.0f}"), "sens-mid": (km_per_ms[len(km_per_ms) // 2], "{:,.0f}"),
+        "sens-end": (km_per_ms[-1], "{:,.0f}"),
+        "arrival-days": ((plan.t_arrival - plan.t_launch) * 365.25, "{:.1f}"),
+        "hohmann-dv": (sum(hohmann(G * ctx.system.star_mass, ctx.system.semi_major_axes[0],
+                                   ctx.system.semi_major_axes[ctx.destination])[:2]) * AU_PER_YR / 1e3, "{:.2f}"),
+    })
     return ctx, plan
 
 

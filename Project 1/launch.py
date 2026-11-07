@@ -37,6 +37,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))  # Repo root, for common/
 
 import io
+import json
 from contextlib import redirect_stdout
 
 import ast2000tools.constants as const
@@ -45,7 +46,9 @@ import numpy as np
 from scipy import integrate, optimize
 
 from common.config import MISSION_FILE, get_mission
-from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, VIOLET, save
+from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, SERIES, VIOLET, save
+from common.report import record, record_many
+from engine import RESULT_FILE
 from rocket import fuel_consumed, load_engine_box
 
 # ------------------------------------------------------------------ design choices
@@ -62,6 +65,7 @@ LAUNCH_ANGLE = 0.0  # Launch site angle on the equator [rad]; 0 = the +x side of
 TIME_OF_LAUNCH = 0.0  # [yr]
 
 MIN_DURATION, MAX_DURATION = 5 * 60, 20 * 60  # Allowed by the assignment and the API [s]
+AU_PER_YR = const.AU / const.yr  # [m/s] per [AU/yr]
 
 
 class HomePlanet:
@@ -313,6 +317,145 @@ def plot_solar_system_frame(launch, planet, frame):
     save(fig, "f_solar_system_frame")
 
 
+def plot_energy_and_losses(launch, planet, spacecraft_mass, exhaust_speed):
+    """
+    Where the fuel goes. Four views of the same launch:
+      energy per kg: kinetic + potential climbs to 0, which is escape;
+      speed bookkeeping: the rocket equation's ideal u ln(m0/m) = v_r + gravity loss (int g dt);
+      what the crew feels: thrust/m in units of the surface gravity;
+      the mass budget at liftoff.
+    """
+    sol = launch["solution"]
+    t = np.linspace(0, launch["duration"], 1500)
+    r, v, m = sol.sol(t)
+    g0 = planet.GM / planet.radius ** 2
+    kinetic = 0.5 * (v ** 2 + planet.v_rot ** 2)
+    potential = -planet.GM / r
+    ideal = exhaust_speed * np.log(m[0] / m)
+    gravity = planet.GM / r ** 2
+    gravity_loss = integrate.cumulative_trapezoid(gravity, t, initial=0)
+
+    fig, axes = plt.subplots(2, 2, figsize=(13, 8))
+    ax = axes[0, 0]
+    ax.plot(t / 60, kinetic / 1e6, color=ORANGE, label="kinetic $\\frac{1}{2}(v_r^2 + v_{rot}^2)$")
+    ax.plot(t / 60, potential / 1e6, color=BLUE, label="potential $-GM/r$")
+    ax.plot(t / 60, (kinetic + potential) / 1e6, color=INK, label="total")
+    ax.axhline(0, color=MUTED, lw=1, ls=":")
+    ax.set_ylabel("specific energy [MJ/kg]")
+    ax.set_title("Energy per kg: escape when the total reaches 0")
+    ax.legend(fontsize=8, loc="center left")
+
+    ax = axes[0, 1]
+    ax.plot(t / 60, ideal / 1e3, color=INK, label=r"rocket equation $u\,\ln(m_0/m)$")
+    ax.fill_between(t / 60, 0, v / 1e3, color=ORANGE, alpha=0.5, lw=0, label="speed gained $v_r$")
+    ax.fill_between(t / 60, v / 1e3, (v + gravity_loss) / 1e3, color=BLUE, alpha=0.35, lw=0,
+                    label=r"gravity loss $\int g\,dt$")
+    ax.set_ylabel("speed [km/s]")
+    ax.set_title(f"Gravity loss: {gravity_loss[-1] / 1e3:.2f} of {ideal[-1] / 1e3:.2f} km/s "
+                 f"({gravity_loss[-1] / ideal[-1]:.0%}) spent holding the rocket up")
+    ax.legend(fontsize=8, loc="upper left")
+
+    ax = axes[1, 0]
+    felt = launch["thrust"] / m / g0
+    ax.plot(t / 60, felt, color=VIOLET, label="felt by the crew: thrust / (m g$_0$)")
+    ax.plot(t / 60, launch["thrust"] / (m * gravity), color=AQUA, label="thrust / local weight")
+    ax.axhline(1, color=MUTED, lw=1, ls=":")
+    ax.set_xlabel("time [min]")
+    ax.set_ylabel("[surface g]")
+    ax.set_title(f"Load factor: {felt[0]:.2f} g at liftoff, {felt[-1]:.1f} g at escape")
+    ax.legend(fontsize=8, loc="upper left")
+
+    ax = axes[1, 1]
+    parts = [("spacecraft", spacecraft_mass, MUTED), ("fuel left (reserve)", launch["fuel_left"], AQUA),
+             ("burned for speed*", launch["fuel_used"] * (1 - gravity_loss[-1] / ideal[-1]), ORANGE),
+             ("burned against gravity*", launch["fuel_used"] * gravity_loss[-1] / ideal[-1], BLUE)]
+    bottom = 0.0
+    total = sum(p[1] for p in parts)
+    for name, mass, color in parts:
+        ax.bar(0, mass / 1e3, bottom=bottom / 1e3, color=color, width=0.5, label=f"{name}: {mass / 1e3:,.1f} t")
+        bottom += mass
+    ax.set_xlim(-0.6, 1.8)
+    ax.set_xticks([])
+    ax.set_ylabel("mass at liftoff [t]")
+    ax.set_title(f"Mass budget: {total / 1e3:,.1f} t on the pad, {spacecraft_mass / total:.2%} of it spacecraft")
+    ax.legend(fontsize=8, loc="center right", title="* burned fuel split by delta-v share", title_fontsize=8)
+    ax.grid(axis="x", visible=False)
+    for ax in axes[:, 0].tolist() + [axes[0, 1]]:
+        ax.set_xlim(0, launch["duration"] / 60)
+    axes[0, 1].set_xlabel("time [min]")
+    fig.suptitle("E  Launch energy and losses: where the fuel goes", fontsize=12)
+    save(fig, "e_energy_and_losses")
+    # Split of the burned fuel (the rocket equation is not linear, so split by speed, as in the bar)
+    return gravity_loss[-1], ideal[-1]
+
+
+def plot_sensitivity(engine, spacecraft_mass, planet, stat_error):
+    """
+    What if the engine is weaker or stronger than we measured in C? Same fuel
+    loaded, same burn, but thrust (or exhaust speed) off by a few percent.
+    """
+    errors = np.linspace(-0.06, 0.06, 25)
+    thrust, mdot, fuel = engine["thrust"], engine["mass_loss_rate"], engine["fuel_mass"]
+    cases = {
+        "thrust (same u)": [simulate_launch(thrust * (1 + x), mdot * (1 + x), fuel, spacecraft_mass, planet)
+                            for x in errors],
+        "exhaust speed (same thrust)": [simulate_launch(thrust, mdot / (1 + x), fuel, spacecraft_mass, planet)
+                                        for x in errors],
+    }
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 4.6))
+    for (name, runs), color in zip(cases.items(), SERIES):
+        ok = np.array([r["success"] for r in runs])
+        duration = np.array([r["duration"] for r in runs])
+        left = np.array([r["fuel_left"] if r["success"] else np.nan for r in runs])
+        ax1.plot(errors[ok] * 100, duration[ok] / 60, "o-", color=color, ms=4, label=name)
+        ax2.plot(errors * 100, left, "o-", color=color, ms=4, label=name)
+        if (~ok).any():
+            ax2.plot(errors[~ok] * 100, np.zeros((~ok).sum()), "x", color=color, ms=9, mew=2)
+    for ax in (ax1, ax2):
+        ax.axvspan(-stat_error * 100, stat_error * 100, color=MUTED, alpha=0.15, lw=0,
+                   label=f"statistical error of C: $\\pm${stat_error:.1%}")
+        ax.axvline(0, color=INK, lw=0.8, ls=":")
+        ax.set_xlabel("engine error [%]")
+        ax.legend(fontsize=8)
+    ax1.axhspan(MIN_DURATION / 60, MAX_DURATION / 60, color=AQUA, alpha=0.08, lw=0)
+    ax1.set_ylabel("launch duration [min]")
+    ax1.set_title("A weaker engine climbs slower (allowed band: 5-20 min)")
+    ax2.axhline(FUEL_RESERVE, color=MUTED, lw=1, ls="--")
+    ax2.set_ylabel("fuel left after escape [kg]")
+    ax2.set_title("...and eats the reserve; x = never escapes")
+    fig.suptitle("E  Sensitivity: the same launch with an engine a few percent off", fontsize=12)
+    save(fig, "e_sensitivity")
+    return cases
+
+
+def plot_launch_angle(launch, planet):
+    """Star frame: the speed after launch for every launch site on the equator (t0 = 0)."""
+    angles = np.linspace(0, 2 * np.pi, 361)
+    states = [to_solar_system_frame(launch, planet, phi) for phi in angles]
+    velocity = np.array([s[2] for s in states]) * AU_PER_YR
+    v_planet = np.linalg.norm(planet.velocity_AU) * AU_PER_YR
+    speed = np.linalg.norm(velocity, axis=1)
+    planet_dir = np.degrees(np.arctan2(planet.velocity_AU[1], planet.velocity_AU[0])) % 360
+    fig = plt.figure(figsize=(13, 5))
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.plot(np.degrees(angles), speed / 1e3, color=BLUE, label="speed relative to the star after launch")
+    ax1.axhline(v_planet / 1e3, color=INK, ls="--", lw=1, label=f"planet's orbital speed {v_planet / 1e3:.2f} km/s")
+    ax1.axvline(planet_dir, color=ORANGE, ls=":", lw=1.5, label=f"along the orbit ({planet_dir:.0f}$^\\circ$)")
+    ax1.set_xlabel("launch-site angle $\\phi$ [deg]")
+    ax1.set_ylabel("speed [km/s]")
+    ax1.set_xticks(range(0, 361, 45))
+    ax1.set_title(f"Launching along the orbit adds up to {(speed.max() - v_planet) / 1e3:.1f} km/s for free")
+    ax1.legend(fontsize=8, loc="lower left")
+    ax2 = fig.add_subplot(1, 2, 2, projection="polar")
+    ax2.plot(angles, speed / 1e3, color=BLUE)
+    ax2.plot(angles, np.full_like(angles, v_planet / 1e3), color=INK, ls="--", lw=1)
+    ax2.set_rlim(speed.min() / 1e3 * 0.98, speed.max() / 1e3 * 1.01)
+    ax2.set_title("same, as a polar plot (radius: km/s)", fontsize=10)
+    fig.suptitle("F  Which launch site? The planet's motion and spin set the starting speed", fontsize=12)
+    save(fig, "f_launch_angle")
+    return angles, speed
+
+
 # ============================================================ verification
 def verify_with_api(mission, thrust, mass_loss_rate, fuel_mass, launch, frame):
     """Hand our numbers to ast2000tools and let it check our final position."""
@@ -328,6 +471,7 @@ def verify_with_api(mission, thrust, mass_loss_rate, fuel_mass, launch, frame):
         mission.verify_launch_result(position_after)
     print("      " + "\n      ".join(line for line in log.getvalue().splitlines() if line.strip()))
     api_duration = (mission.time_after_launch - TIME_OF_LAUNCH) * const.yr
+    record("api-duration", api_duration, "{:.2f}")
     print(f"      launch duration: ours {launch['duration']:.2f} s, API {api_duration:.2f} s "
           f"(diff {abs(api_duration - launch['duration']):.2f} s; the API uses 0.01 s Euler steps)")
     return mission.launch_result_verified
@@ -369,9 +513,43 @@ def main():
     plot_launch(launch, planet, craft)
     plot_solar_system_frame(launch, planet, frame)
     plot_design_space(thrust_box, mdot_box, craft, planet, liftoff_tw)
+    gravity_loss, ideal_dv = plot_energy_and_losses(launch, planet, craft, thrust / mdot)
+    with open(RESULT_FILE) as f:
+        stat_error = json.load(f).get("relative_statistical_error", 0.01)
+    engine = {"thrust": thrust, "mass_loss_rate": mdot, "fuel_mass": fuel}
+    cases = plot_sensitivity(engine, craft, planet, stat_error)
+    angles, speed = plot_launch_angle(launch, planet)
+    longest = normalised_launch(planet.GM / planet.radius ** 2 * 1.0001, thrust / mdot, planet)["duration"]
+    weak = cases["thrust (same u)"][np.argmin(np.abs(np.linspace(-0.06, 0.06, 25) + 0.05))]
+
+    record_many({
+        "home-R": (planet.radius / 1e3, "{:,.0f}"), "home-M": (planet.mass, "{:.3e}"),
+        "home-g": (planet.GM / planet.radius ** 2, "{:.2f}"), "home-vesc": (planet.v_esc / 1e3, "{:.2f}"),
+        "home-vrot": (planet.v_rot, "{:.0f}"), "home-Prot": (planet.rotation_period / 3600, "{:.1f}"),
+        "craft-mass": (craft, "{:.0f}"), "n-boxes": (n_boxes, "{:.3e}"), "thrust": (thrust / 1e3, "{:,.0f}"),
+        "mdot": (mdot, "{:.1f}"), "fuel-loaded": (fuel / 1e3, "{:,.1f}"), "liftoff-tw": (liftoff_tw, "{:.3f}"),
+        "launch-duration": (launch["duration"], "{:.1f}"), "launch-minutes": (launch["duration"] / 60, "{:.2f}"),
+        "launch-height": ((launch["r"] - planet.radius) / 1e3, "{:,.0f}"), "launch-vr": (launch["v"] / 1e3, "{:.2f}"),
+        "fuel-used": (launch["fuel_used"] / 1e3, "{:,.1f}"), "fuel-left": (launch["fuel_left"], "{:,.0f}"),
+        "fuel-reserve": (FUEL_RESERVE, "{:,.0f}"), "target-duration": (TARGET_DURATION / 60, "{:.0f}"),
+        "fuel-no-gravity": (no_gravity / 1e3, "{:,.1f}"),
+        "gravity-loss": (gravity_loss / 1e3, "{:.2f}"), "ideal-dv": (ideal_dv / 1e3, "{:.2f}"),
+        "gravity-loss-pct": (gravity_loss / ideal_dv * 100, "{:.0f}"),
+        "speed-max-angle": (speed.max() / 1e3, "{:.2f}"), "speed-min-angle": (speed.min() / 1e3, "{:.2f}"),
+        "weak-fuel-left": (weak["fuel_left"] if weak["success"] else 0.0, "{:,.0f}"),
+        "weak-duration": (weak["duration"] / 60, "{:.2f}"),
+        "stat-error": (stat_error * 100, "{:.2f}"),
+        "longest-launch": (longest / 60, "{:.2f}"),
+        "v-planet": (np.linalg.norm(planet.velocity_AU) * AU_PER_YR / 1e3, "{:.1f}"),
+        "pos-before-x": (position_before[0], "{:.8f}"), "pos-before-y": (position_before[1], "{:.8f}"),
+        "pos-after-x": (position_after[0], "{:.8f}"), "pos-after-y": (position_after[1], "{:.8f}"),
+        "vel-after-x": (velocity_after[0], "{:.5f}"), "vel-after-y": (velocity_after[1], "{:.5f}"),
+        "time-after": (time_after, "{:.4e}"),
+    })
 
     print("API   set_launch_parameters -> launch_rocket -> verify_launch_result")
     verified = verify_with_api(mission, thrust, mdot, fuel, launch, frame)
+    record("verified", "passed" if verified else "FAILED")
     if verified:
         mission.save(MISSION_FILE, mission, verbose=False)
         print(f"      VERIFIED. Mission saved to {MISSION_FILE.split('/')[-1]} for the next parts.")

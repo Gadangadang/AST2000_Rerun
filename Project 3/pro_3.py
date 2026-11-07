@@ -20,12 +20,14 @@ import time
 import destination
 import generalised_launch
 import habitable_zone
+from common.report import record_system
 from common.runner import banner
 
 
 
 def main():
     start = time.perf_counter()
+    record_system()
     banner("1  The habitable zone")
     habitable_zone.main()
     banner("2, 4, 5  Choosing the destination; how close is close")

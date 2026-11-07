@@ -12,5 +12,6 @@
   },
   "thrust_per_box": 5.759420593705208e-10,
   "mass_loss_rate_per_box": 1.3165957323123082e-13,
-  "exhaust_speed": 4374.479160425398
+  "exhaust_speed": 4374.479160425398,
+  "relative_statistical_error": 0.004117039519789948
 }

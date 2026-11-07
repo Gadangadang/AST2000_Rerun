@@ -36,7 +36,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from common.config import DESTINATION, SEED, get_mission
-from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, PLANET_COLORS, save
+from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, PLANET_COLORS, VIOLET, save
+from common.report import record, record_many
 from habitable_zone import Star, T_WATER, habitable_zone, planet_table
 from orbits import G, analytic_orbit, kepler_state
 
@@ -221,6 +222,97 @@ def plot_closeness(rows):
     save(fig, "4_capture_and_camera")
 
 
+def plot_window_calendar(system, rows, destination, t_max=12.0):
+    """
+    When can we go? The angle by which each rocky planet leads home, against the
+    angle a Hohmann transfer needs (pi - n_target t_transfer). A window opens each
+    time the two meet: once per synodic period.
+    """
+    t = np.linspace(0, t_max, 6000)
+    pos, _ = kepler_state(system, t)
+    angle = np.arctan2(pos[1], pos[0])
+    rocky = [r for r in rows if r["type"] == "rock"]
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), gridspec_kw={"height_ratios": [2, 1]})
+    row = next(r for r in rows if r["planet"] == destination)
+    n_dest = 2 * np.pi / np.sqrt(row["a"] ** 3 / (G * system.star_mass))
+    lead = np.degrees(np.angle(np.exp(1j * (angle[destination] - angle[HOME]))))
+    needed = np.degrees(np.angle(np.exp(1j * (np.pi - n_dest * row["transfer_yr"]))))  # Wrapped to (-180, 180]
+    jumps = np.abs(np.diff(lead)) > 180
+    lead_plot = lead.copy()
+    lead_plot[1:][jumps] = np.nan  # Don't draw the wrap-around
+    ax1.plot(t, lead_plot, color=PLANET_COLORS[destination], label=f"planet {destination} leads home by")
+    ax1.axhline(needed, color=INK, ls="--", lw=1.2, label=f"Hohmann needs {needed:.1f}$^\\circ$")
+    windows = t[:-1][(np.sign(lead[:-1] - needed) != np.sign(lead[1:] - needed)) & ~jumps]
+    for w in windows:
+        ax1.axvline(w, color=AQUA, lw=1.2, alpha=0.7)
+    ax1.set_ylabel("phase angle [deg]")
+    ax1.set_ylim(-180, 180)
+    ax1.set_yticks(range(-180, 181, 90))
+    ax1.set_title(f"Planet {destination}: a window every {row['synodic_yr']:.2f} yr (vertical lines)", fontsize=10)
+    ax1.legend(fontsize=8, loc="lower right")
+    for k, r in enumerate(rocky):
+        p = r["planet"]
+        n_p = 2 * np.pi / np.sqrt(r["a"] ** 3 / (G * system.star_mass))
+        lead_p = np.angle(np.exp(1j * (angle[p] - angle[HOME])))
+        miss = np.angle(np.exp(1j * (lead_p - (np.pi - n_p * r["transfer_yr"]))))
+        open_ = t[:-1][(np.sign(miss[:-1]) != np.sign(miss[1:])) & (np.abs(miss[:-1]) < 1)]
+        ax2.plot(open_, np.full(len(open_), k), "|", color=PLANET_COLORS[p], ms=22, mew=2.5)
+        ax2.annotate(f"  every {r['synodic_yr']:.2f} yr", (t_max, k), fontsize=8, va="center", annotation_clip=False)
+    ax2.set_yticks(range(len(rocky)))
+    ax2.set_yticklabels([f"planet {r['planet']}" for r in rocky])
+    ax2.set_ylim(-0.7, len(rocky) - 0.3)
+    ax2.set_xlim(0, t_max)
+    ax1.set_xlim(0, t_max)
+    ax2.set_xlabel("time [yr]")
+    ax2.set_title("Launch windows to every rocky planet (Hohmann, circular orbits)", fontsize=10)
+    fig.suptitle("2  Launch-window calendar", fontsize=12)
+    save(fig, "2c_window_calendar", rect=(0, 0, 0.94, 1))
+    return windows
+
+
+def plot_delta_v_map(system, rows, destination):
+    """
+    The cost of going anywhere: Hohmann delta-v and travel time against the
+    target's distance. Burning deep in the planets' gravity wells (Oberth)
+    makes the same trip much cheaper; Part 5 does exactly that.
+    """
+    GM = G * system.star_mass
+    r1 = system.semi_major_axes[HOME]
+    r2 = np.logspace(np.log10(0.12), np.log10(9), 400)
+    dv1, dv2, t_transfer = hohmann(GM, r1, r2)
+    M_home, R_home = system.masses[HOME] * const.m_sun, system.radii[HOME] * 1e3
+    v_esc = np.sqrt(2 * const.G * M_home / R_home) / AU_PER_YR  # [AU/yr]
+    oberth_dep = np.sqrt(dv1 ** 2 + v_esc ** 2) - v_esc
+    # Capture: the cheapest circular orbit has r = 2GM/v_inf^2 and costs v_inf/sqrt(2); a typical rocky planet
+    # (the destination) stands in for all targets here
+    capture = dv2 / np.sqrt(2)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5.3))
+    ax1.loglog(r2, (dv1 + dv2) * AU_PER_YR / 1e3, color=INK, label="Hohmann from orbit to orbit (Part 3)")
+    ax1.loglog(r2, dv1 * AU_PER_YR / 1e3, color=BLUE, lw=1.2, ls="--", label="... departure part")
+    ax1.loglog(r2, (oberth_dep + capture) * AU_PER_YR / 1e3, color=VIOLET,
+               label="burn deep in the gravity wells (Oberth, as in Part 5)")
+    for r in rows:
+        ax1.plot(r["a"], r["dv"] / 1e3, "o", color=PLANET_COLORS[r["planet"]], ms=9 if r["type"] == "gas" else 7,
+                 mec=INK, mew=0.5)
+        ax1.annotate(f" {r['planet']}", (r["a"], r["dv"] / 1e3), fontsize=9)
+    ax1.axvline(r1, color=PLANET_COLORS[HOME], lw=1, ls=":")
+    ax1.set_xlabel("target distance from the star [AU]")
+    ax1.set_ylabel("delta-v [km/s]")
+    ax1.set_title("Cost of a trip from home (dotted: home's orbit)", fontsize=10)
+    ax1.legend(fontsize=8, loc="lower right")
+    ax2.loglog(r2, t_transfer * 365.25, color=INK)
+    for r in rows:
+        ax2.plot(r["a"], r["transfer_yr"] * 365.25, "o", color=PLANET_COLORS[r["planet"]], ms=8, mec=INK, mew=0.5)
+        ax2.annotate(f" {r['planet']}", (r["a"], r["transfer_yr"] * 365.25), fontsize=9)
+    ax2.set_xlabel("target distance from the star [AU]")
+    ax2.set_ylabel("travel time [days]")
+    ax2.set_title("Travel time: half the transfer ellipse's period", fontsize=10)
+    fig.suptitle("2  Delta-v map of the system", fontsize=12)
+    save(fig, "2d_delta_v_map")
+    i = np.argmin(np.abs(r2 - system.semi_major_axes[destination]))
+    return (oberth_dep[i] + capture[i]) * AU_PER_YR
+
+
 def main():
     system = get_mission().system
     star = Star(system)
@@ -246,6 +338,22 @@ def main():
     plot_comparison(system, star, rows)
     plot_transfers(system, rows)
     plot_closeness(rows)
+    windows = plot_window_calendar(system, rows, chosen)
+    oberth_dv = plot_delta_v_map(system, rows, chosen)
+    row = next(r for r in rows if r["planet"] == chosen)
+    record_many({"dest": (chosen, "{:d}"), "dest-auto": (auto, "{:d}"), "dest-type": row["type"],
+                 "dest-a": (row["a"], "{:.3f}"), "dest-g": (row["g"], "{:.2f}"), "dest-vesc": (row["v_esc"] / 1e3, "{:.2f}"),
+                 "dest-rho-atm": (row["rho_atm"], "{:.2f}"), "dest-day": (row["day_h"], "{:.1f}"),
+                 "dest-dv": (row["dv"] / 1e3, "{:.2f}"), "dest-dv1": (row["dv1"] / 1e3, "{:.2f}"),
+                 "dest-dv2": (row["dv2"] / 1e3, "{:.2f}"), "dest-days": (row["transfer_yr"] * 365.25, "{:.0f}"),
+                 "dest-synodic": (row["synodic_yr"], "{:.2f}"), "dest-window": (row["window_yr"], "{:.2f}"),
+                 "dest-capture": (row["capture_km"], "{:,.0f}"), "dest-resolve": (row["resolve_km"], "{:,.0f}"),
+                 "dest-radius": (row["radius_km"], "{:,.0f}"),
+                 "dest-capture-radii": (row["capture_km"] / row["radius_km"], "{:.1f}"), "dest-oberth-dv": (oberth_dv / 1e3, "{:.2f}"),
+                 "k-dominant": (K_DOMINANT, "{:d}"), "camera-px": (CAMERA_PIXELS, "{:d}"),
+                 "camera-fov": (np.degrees(CAMERA_FOV), "{:.0f}"),
+                 "home-g3": (const.G * system.masses[HOME] * const.m_sun / (system.radii[HOME] * 1e3) ** 2, "{:.2f}")})
+    record("dest-windows", ", ".join(f"{w:.2f}" for w in windows[:4]))
     return rows
 
 

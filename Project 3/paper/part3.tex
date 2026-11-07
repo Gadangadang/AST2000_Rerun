@@ -1,0 +1,180 @@
+% AST2000 Part 3: the habitable zone, choosing a destination, and launching at any time.
+% Compile: cd "Project 3/paper" && latexmk -pdf part3.tex   (or: python build_papers.py 3 from the repo root)
+% Every number written as \val{key} comes from results.tex, made by pro_3.py.
+\documentclass[aps,prd,twocolumn,nofootinbib,floatfix,superscriptaddress]{revtex4-2}
+\usepackage{../../common/paper/ast2000}
+
+\begin{document}
+
+\title{Part 3: The Habitable Zone, Choosing a Destination, and Launching at Any Time}
+\author{Sakarias Frette}
+\affiliation{AST2000 Rerun, University of Oslo}
+\date{\today}
+
+\begin{abstract}
+We prepare the journey.
+Treating the star (\val{star-T}\,K, \val{star-Rsun}\,$R_\odot$) and the planets as black bodies, we find that liquid water is possible from \val{hz-in} to \val{hz-out}\,AU.
+Planets \val{hz-planets} lie inside this habitable zone.
+We compare every planet as a destination by temperature, gravity, atmosphere, fuel cost and travel time, and choose planet \val{dest}.
+It is rocky, has an equilibrium temperature of \val{dest-T}\,K, and costs \val{dest-dv}\,km/s and \val{dest-days} days by a Hohmann transfer, with launch windows every \val{dest-synodic}\,yr.
+A $\Delta v$ map shows that burning deep in the planets' gravity wells cuts the cost to about \val{dest-oberth-dv}\,km/s.
+We find how close counts as ``arrived'' (\val{dest-capture}\,km) and how close the planet must be to fill a camera pixel.
+Finally we generalise the Part 1 launch to any time and any site on the equator.
+All \val{n-tests} test launches were verified by \code{ast2000tools}, at most \val{max-miss}\,km from the API's own result.
+\end{abstract}
+
+\maketitle
+
+% =====================================================================
+\section{Introduction}
+Part 3 of the project~\cite{ast2000project} answers three questions before the journey.
+\begin{itemize}
+\item Where could a lander live (\cref{sec:hz})?
+\item Which planet should we go to, and when (\cref{sec:dest})?
+\item Can we launch from anywhere at any time, accurately enough to plan with (\cref{sec:launch})?
+\end{itemize}
+Solar system seed: \val{seed}.
+
+% =====================================================================
+\section{The habitable zone}\label{sec:hz}
+\subsection{Theory}
+A star of radius $R_\star$ and temperature $T_\star$ radiates $L=4\pi R_\star^2\sigma T_\star^4$.
+At distance $r$ this gives the flux $F=\sigma T_\star^4(R_\star/r)^2$.
+A planet of radius $R$ catches $F\pi R^2$ on its cross-section and radiates $4\pi R^2\sigma T^4$ from its whole surface~\cite{carroll2017}.
+In equilibrium
+\begin{equation}
+  T = T_\star\sqrt{\frac{R_\star}{2r}}, \qquad r(T)=\frac{R_\star}{2}\left(\frac{T_\star}{T}\right)^2. \label{eq:T}
+\end{equation}
+The planet's own size cancels.
+Requiring liquid water, $\val{T-water-lo}\le T\le\val{T-water-hi}$\,K, defines the habitable zone through $r(T)$.
+A lander needing \val{panel-power}\,W from panels of \val{panel-eff}\% efficiency needs an area $A=P/(\eta F)$.
+
+\subsection{Results}
+The star has $L=\val{star-L}\,L_\odot$.
+The habitable zone spans \val{hz-in}--\val{hz-out}\,AU, or \val{hz-wide-in}--\val{hz-wide-out}\,AU with the $\pm\val{T-margin}$\,K uncertainty (\cref{fig:T,fig:hzmap}).
+The home planet sits at \val{T-home}\,K and planet \val{dest} at \val{dest-T}\,K.
+
+Planet \val{dest}'s orbit is nearly circular, so over its year the flux varies only between \val{dest-F-min} and \val{dest-F-max}\,W/m$^2$.
+The temperature varies only between \val{dest-T-min} and \val{dest-T-max}\,K (\cref{fig:power}).
+The lander needs a panel of just \val{dest-panel}\,m$^2$.
+
+\widefig{1a_temperatures}{Black-body temperature against distance, with every planet (error bars: perihelion to aphelion) and the habitable zone.}{fig:T}
+\widefig{1b_habitable_zone_map}{The habitable zone as a ring in the system.}{fig:hzmap}
+\widefig{1c_solar_power}{Left: solar-panel area for \val{panel-power}\,W against distance. Right: planet \val{dest}'s flux over one orbit, with the matching equilibrium temperature on the right axis.}{fig:power}
+
+% =====================================================================
+\section{Choosing the destination}\label{sec:dest}
+\subsection{Method}
+For each planet we compute
+\begin{itemize}
+\item temperature;
+\item surface gravity $g$ and escape speed;
+\item atmospheric density;
+\item day length;
+\item solar-panel area;
+\item the cost of getting there.
+\end{itemize}
+For the cost we use a Hohmann transfer: the cheapest two-burn transfer between circular orbits $r_1$ and $r_2$~\cite{curtis2014}.
+It needs
+\begin{align}
+  \Delta v_1 &= \sqrt{\frac{GM}{r_1}}\left(\sqrt{\frac{2r_2}{r_1+r_2}}-1\right),\\
+  \Delta v_2 &= \sqrt{\frac{GM}{r_2}}\left(1-\sqrt{\frac{2r_1}{r_1+r_2}}\right),
+\end{align}
+and takes half the transfer ellipse's period.
+The target must lead home by $\pi-n_2t_{\rm transfer}$ at launch, where $n_2$ is its mean motion.
+This happens once per synodic period, $1/|1/P_1-1/P_2|$.
+We find the actual windows from the exact Kepler positions.
+
+\subsection{Results}
+\Cref{fig:compare} compares the candidates.
+The gas giants have huge gravity and no surface to land on.
+Planet 7 is hot and close to the star, and it costs a lot to reach.
+Planet \val{dest} is the best compromise.
+\begin{itemize}
+\item It is rocky and inside the habitable zone.
+\item Its gravity is $g=\val{dest-g}$\,m/s$^2$, against \val{home-g3} at home.
+\item A day lasts \val{dest-day}\,h.
+\item A Hohmann transfer costs $\val{dest-dv1}+\val{dest-dv2}=\val{dest-dv}$\,km/s and takes \val{dest-days} days.
+\end{itemize}
+Our automatic rule (rocky, habitable if possible, then cheapest) picks planet \val{dest-auto} as well.
+Its atmosphere is dense, \val{dest-rho-atm}\,kg/m$^3$ at the surface.
+That is a challenge for the landing, but also a free brake.
+
+The window calendar (\cref{fig:windows}) gives windows at $t=\val{dest-windows},\ldots$\,yr.
+Part 5 uses the second.
+
+The $\Delta v$ map (\cref{fig:dvmap}) puts the choice in context.
+Going outward, costs rise quickly at first and then level off.
+The real trip can be much cheaper than the orbit-to-orbit Hohmann estimate.
+Right after the Part 1 launch the rocket is still deep in the home planet's gravity well, moving at the local escape speed.
+There, a burn adds much more energy per unit of $\Delta v$ (the Oberth effect), so leaving with $v_\infty$ costs only $\sqrt{v_\infty^2+v_{\rm esc}^2}-v_{\rm esc}$.
+At the other end, capture into the cheapest circular orbit costs $v_\infty/\sqrt2$.
+Together these give about \val{dest-oberth-dv}\,km/s for planet \val{dest}, which Part 5 confirms in the full simulation.
+
+\subsection{How close is close?}
+The spacecraft counts as arrived when the planet pulls $k=\val{k-dominant}$ times harder than the star, which happens inside
+\begin{equation}
+  l = |\vb r|\sqrt{\frac{M_p}{k M_\star}}.
+\end{equation}
+For planet \val{dest} this is \val{dest-capture}\,km, \val{dest-capture-radii} planet radii (\cref{fig:close}).
+A camera with $P=\val{camera-px}$ pixels across a $\val{camera-fov}^\circ$ field of view resolves the planet once $2R/L>F/P$.
+That holds within \val{dest-resolve}\,km, so we see the planet long before its gravity dominates.
+
+\widefig{2a_destination_comparison}{Every candidate compared. Hatched: gas giants. HZ: inside the habitable zone.}{fig:compare}
+\colfig{2b_transfer_routes}{Hohmann routes from home to the rocky planets.}{fig:routes}
+\widefig{2c_window_calendar}{Top: the angle by which planet \val{dest} leads home, against the angle a Hohmann transfer needs. A window opens where they meet. Bottom: windows to every rocky planet.}{fig:windows}
+\widefig{2d_delta_v_map}{$\Delta v$ map. Hohmann cost from orbit to orbit (black), and the cost with an Oberth departure right after launch plus the cheapest capture (violet). Right: travel time.}{fig:dvmap}
+\widefig{4_capture_and_camera}{Capture distance ($k=\val{k-dominant}$) and camera-resolution distance for every planet.}{fig:close}
+
+% =====================================================================
+\section{Launching at any time}\label{sec:launch}
+\subsection{Method}
+Seen from the planet, the launch is the same at any time and from any site: radially up, \val{drift-km}\,km of sideways drift from the rotation.
+Only the step to the star's frame changes.
+With $\hat{\vb e}_r=(\cos\phi,\sin\phi)$ at site angle $\phi$ and $\hat{\vb e}_t$ along the rotation,
+\begin{align}
+  \vb r &= \vb r_p(t_0+\Delta t) + v_{rot}\Delta t\,\hat{\vb e}_t + r_{\rm final}\hat{\vb e}_r,\\
+  \vb v &= \vb v_p(t_0+\Delta t) + v_{rot}\hat{\vb e}_t + v_r\hat{\vb e}_r.
+\end{align}
+The planet's state comes from Kepler's equation (Part 2), not from interpolating our simulated orbits.
+Those drift hundreds of kilometres from the truth over 20 home orbits, while the API's tolerance is only \val{tolerance}\,km (1.5\% of the planet radius).
+Using the curved orbit instead of Part 1's straight line changes the result by \val{curved-vs-straight}\,km.
+
+\subsection{Results}
+We tested \val{n-tests} launches spread over 20 home orbits and all directions (\cref{fig:sites,fig:times}).
+\val{n-verified} of \val{n-tests} were verified.
+The largest miss was \val{max-miss}\,km in position and \val{max-miss-v}\,m/s in velocity.
+The velocity difference comes from the API's 0.01\,s Euler steps, and Part 5 corrects for it after launch.
+
+\widefig{3a_launch_sites}{Launches from eight sites on the equator (planet frame), and a zoom on the sideways drift from the rotation.}{fig:sites}
+\widefig{3b_launch_times}{Test launches along the home orbit, and the distance between our predicted position and the API's.}{fig:times}
+
+% =====================================================================
+\section{Discussion and conclusion}
+The black-body model ignores albedo and greenhouse heating, both of which would move the zone.
+The $\pm\val{T-margin}$\,K band shows how sensitive the edges are.
+Our choice is robust: planet \val{dest} sits well inside the zone either way.
+
+The Hohmann estimate is deliberately simple: circular, coplanar orbits and no planetary gravity.
+The $\Delta v$ map shows that it overestimates the real cost by more than a factor of two, because it ignores the Oberth effect.
+That is the most important lesson carried into the journey.
+
+The launch is now a tool we can use at any time and site with kilometre accuracy.
+That is exactly what the journey planner in Part 5 needs.
+
+\bibliography{../../common/paper/references}
+
+\appendix
+\section{Mission log}
+\begin{missionbox}{Part 3 key numbers (seed \val{seed})}
+Habitable zone & \val{hz-in}--\val{hz-out}\,AU \\
+Destination & planet \val{dest} (\val{dest-type}, $a=\val{dest-a}$\,AU) \\
+Temperature / panel & \val{dest-T}\,K / \val{dest-panel}\,m$^2$ \\
+Hohmann $\Delta v$ / time & \val{dest-dv}\,km/s / \val{dest-days}\,d \\
+With Oberth & \val{dest-oberth-dv}\,km/s \\
+Windows (yr) & \val{dest-windows} \\
+Capture distance & \val{dest-capture}\,km \\
+Launch tests verified & \val{n-verified}/\val{n-tests} \\
+\end{missionbox}
+
+\end{document}

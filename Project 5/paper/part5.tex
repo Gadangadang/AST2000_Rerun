@@ -1,0 +1,216 @@
+% AST2000 Part 5: planning and flying the journey to the destination planet.
+% Compile: cd "Project 5/paper" && latexmk -pdf part5.tex   (or: python build_papers.py 5 from the repo root)
+% Every number written as \val{key} comes from results.tex, made by pro_5.py.
+\documentclass[aps,prd,twocolumn,nofootinbib,floatfix,superscriptaddress]{revtex4-2}
+\usepackage{../../common/paper/ast2000}
+
+\begin{document}
+
+\title{Part 5: Planning and Flying the Journey to Planet \val{dest}}
+\author{Sakarias Frette}
+\affiliation{AST2000 Rerun, University of Oslo}
+\date{\today}
+
+\begin{abstract}
+We plan and fly a journey from the home planet into a circular orbit around planet \val{dest}.
+A trajectory simulator with exact planetary ephemerides and an adaptive eighth-order integrator reproduces a 20-orbit test to \val{kepler-err-km}\,km.
+A porkchop plot of $\val{grid}^2$ Lambert transfers selects a launch at $t=\val{t-launch}$\,yr and a \val{travel-days}-day trip.
+The plan has two key elements:
+\begin{itemize}
+\item a departure burn of \val{plan-boost}\,m/s right after launch, deep in the home planet's gravity well, which replaces \val{vinf-dep}\,km/s far away;
+\item an orbit radius chosen to minimise the capture burn.
+\end{itemize}
+Newton shooting in the full $N$-body simulation refines the plan.
+We then flew it with \code{ast2000tools}, using the Part 4 software to find the spacecraft's state from its instruments.
+\val{n-corrections-word} course corrections costing \val{correction-total}\,cm/s in total brought the spacecraft to \val{closest}\,km from planet \val{dest}, where a \val{real-injection}\,m/s burn put it into a circular orbit with a period of \val{orbit-P}\,h.
+The whole trip used \val{real-total}\,km/s and left \val{fuel-final}\,kg of fuel for the landing.
+\end{abstract}
+
+\maketitle
+
+% =====================================================================
+\section{Introduction}
+Part 3 chose planet \val{dest} as the destination and estimated the cost of the trip.
+This part~\cite{ast2000project} makes the trip, in four steps:
+\begin{itemize}
+\item a trajectory simulator (\cref{sec:sim});
+\item a plan that minimises fuel (\cref{sec:plan});
+\item the real flight, which can only learn its state from its instruments (\cref{sec:flight});
+\item a description of the orbit we end in (\cref{sec:orbit}).
+\end{itemize}
+Solar system seed: \val{seed}.
+
+% =====================================================================
+\section{The trajectory simulator}\label{sec:sim}
+While coasting, the spacecraft feels the star and all the planets,
+\begin{equation}
+  \ddot{\vb r} = -\frac{GM_\star\vb r}{|\vb r|^3}-\sum_i\frac{GM_i(\vb r-\vb r_i(t))}{|\vb r-\vb r_i(t)|^3}.
+\end{equation}
+
+\paragraph{Ephemeris.}
+The planets' positions come from Kepler's equation (Part 2) on a uniform grid every \val{eph-dt-min} minutes.
+Between grid points we interpolate with cubic Hermite polynomials, which also match the exact velocities.
+\begin{itemize}
+\item The interpolation error is \val{eph-err-hermite}\,m, against \val{eph-err-linear}\,m for linear interpolation.
+\item The planets' velocities stay continuous. With linear interpolation they jump at every grid point, and an adaptive integrator wastes steps on these artificial kicks: \val{linear-evals} force evaluations against \val{hermite-evals} for the same trip.
+\end{itemize}
+
+\paragraph{Integrator.}
+The trip has two very different time scales: minutes near a planet and months in between.
+We therefore use the adaptive DOP853 integrator~\cite{dormand1980} with a relative tolerance of \val{rtol}.
+A test particle on a Kepler orbit stays within \val{kepler-err-km}\,km of the exact solution after 20 orbits (\cref{fig:sim}).
+
+\paragraph{Batches.}
+The simulator integrates many spacecraft at once, computing the gravity of all planets on all spacecraft with NumPy broadcasting.
+A batch of \val{batch-max} costs \val{batch-speedup} times less per spacecraft than single runs.
+The planner gets its Jacobians this way.
+
+\widefig{a_simulator_tests}{Simulator tests: ephemeris interpolation error, accuracy and cost against tolerance, and cost per spacecraft in a batch.}{fig:sim}
+
+% =====================================================================
+\section{Planning}\label{sec:plan}
+\subsection{When to go: the porkchop plot}
+For every pair of launch date and travel time on a $\val{grid}\times\val{grid}$ grid, Lambert's problem~\cite{izzo2015} gives the transfer orbit around the star.
+Its velocities relative to the planets at the two ends, $v_\infty$, set the cost.
+
+\paragraph{Departure.}
+The Part 1 launch ends at exactly the escape speed $v_{\rm esc}$, still deep in the home planet's gravity well.
+A burn there gains much more energy than the same burn far away (the Oberth effect).
+Leaving with $v_\infty$ costs only
+\begin{equation}
+  \Delta v_{\rm dep}=\sqrt{v_\infty^2+v_{\rm esc}^2}-v_{\rm esc}.
+\end{equation}
+
+\paragraph{Arrival.}
+Falling in from $v_\infty$ to a circular orbit of radius $r$ costs
+\begin{equation}
+  \Delta v_{\rm arr}=\sqrt{v_\infty^2+\frac{2GM}{r}}-\sqrt{\frac{GM}{r}},
+\end{equation}
+which is smallest at $r=2GM/v_\infty^2$, where $\Delta v_{\rm arr}=v_\infty/\sqrt2$.
+So the planner chooses the orbit radius as well as the route.
+
+\paragraph{Result.}
+\Cref{fig:porkchop} shows windows once per synodic period.
+The cheapest point in $\val{window-lo}\le t\le\val{window-hi}$\,yr costs \val{porkchop-min}\,km/s in total: launch at $t=\val{t-launch}$\,yr and arrive \val{travel-days} days later.
+There, $v_\infty=\val{vinf-dep}$\,km/s at departure and \val{vinf-arr}\,km/s at arrival, so the burns are \val{pc-dv-dep} and \val{pc-dv-arr}\,m/s.
+\Cref{fig:trades} shows both trades.
+The Oberth departure saves most of the departure cost, and the chosen orbit, \val{r-orbit-radii} planet radii, sits at the minimum of the capture curve.
+
+\subsection{Where to launch from, and shooting}
+The launch goes straight up from the launch site (Part 3).
+We choose the site whose ``up'' points along the required departure direction ($\phi=\val{launch-angle}^\circ$).
+The rocket then leaves the planet in a straight line: gravity slows it but cannot bend it (\cref{fig:departure}).
+
+The patched-conic numbers are only a first guess, off by \val{guess-off}\,m/s.
+We refine the departure burn with Newton's method in the full $N$-body simulation.
+For small changes the miss at arrival is linear in the burn, and one batched run of three spacecraft gives the $2\times2$ Jacobian.
+An outer secant loop adjusts the aim point beside the planet until the closest approach equals the planned orbit radius.
+
+The final plan is:
+\begin{itemize}
+\item a departure burn of \val{plan-boost}\,m/s;
+\item closest approach after \val{arrival-days} days at \val{r-orbit}\,km;
+\item an injection burn of \val{plan-inj}\,m/s;
+\item fuel of \val{plan-fuel-dep}\,kg and \val{plan-fuel-inj}\,kg for the two burns, out of \val{fuel-after-launch}\,kg (\cref{fig:budget}).
+\end{itemize}
+
+\subsection{Sensitivity}
+\Cref{fig:sens} shows how far the arrival point moves per m/s of velocity error, depending on when the error happens:
+\begin{itemize}
+\item right after launch: \val{sens-start}\,km;
+\item halfway: \val{sens-mid}\,km;
+\item a day before arrival: \val{sens-end}\,km.
+\end{itemize}
+Two conclusions follow.
+The departure burn must be exact, and course corrections are cheapest early.
+
+\widefig{b1_porkchop}{Porkchop plot of the total $\Delta v$ against launch date and travel time (left), and the cost of the best travel time for every launch date (right).}{fig:porkchop}
+\widefig{b7_trades}{Left: capture burn against orbit radius, with the optimum $2GM/v_\infty^2$. Right: departure burn against the $v_\infty$ needed, with and without the Oberth effect.}{fig:trades}
+\widefig{b2_planned_journey}{The planned trip in the star's frame, and the distance to planet \val{dest} against time.}{fig:plan}
+\widefig{b3_departure}{The first 48 hours in the home planet's frame: launching ``up'' along the departure direction.}{fig:departure}
+\widefig{b4_arrival}{Arrival in planet \val{dest}'s frame: the approach and the circular orbit after injection.}{fig:arrival}
+\widefig{b5_budget}{The planned burns and the fuel left after each.}{fig:budget}
+\widefig{b6_sensitivity}{Miss at arrival per 1\,m/s velocity error, against the time of the error.}{fig:sens}
+
+% =====================================================================
+\section{The flight}\label{sec:flight}
+\subsection{Method}
+We launched at the planned time and site (verification: \val{launch-verified}) and ran the Part 4 orientation software (verification: \val{orient-verified}).
+Our launch prediction differs from the API's by a few m/s, which a four-month trip would amplify.
+We therefore re-aimed the departure burn from the \emph{measured} state, giving \val{real-departure}\,m/s.
+
+During the cruise the spacecraft oriented itself at \val{n-correction-points} points.
+At each it predicted where it would arrive with our simulator, and corrected only if it was heading more than \val{miss-tolerance}\,km off the aim point.
+At the end it predicted the closest approach, coasted there, and burned into a circular orbit.
+
+\subsection{Results}
+The first check, a few days out, found us heading \val{first-off}\,km off.
+Only \val{n-corrections} corrections were needed, together \val{correction-total}\,cm/s, and the last check found us \val{last-off}\,km off (\cref{fig:corr}).
+The closest approach came at $t=\val{t-closest}$\,yr, \val{closest}\,km from the planet's centre, which is exactly the planned radius.
+The injection burn was \val{real-injection}\,m/s.
+
+The telemetry (\cref{fig:telemetry}) shows the physics of the trip.
+\begin{itemize}
+\item The speed relative to the star falls as the spacecraft climbs outward.
+\item The energy relative to the star stays constant through the cruise. It changes only while the planets' gravity dominates: climbing out of the home planet's well and falling into the destination's.
+\item The fuel steps down at the two large burns; the corrections do not show at this scale.
+\end{itemize}
+The total cost was \val{real-total}\,km/s, against \val{plan-total}\,km/s planned, leaving \val{fuel-final}\,kg of fuel.
+
+\widefig{c1_flight}{The real flight: trajectory with burns, deviation from the planned path, and all burns.}{fig:flight}
+\widefig{c2_telemetry}{Flight telemetry from the spacecraft's own orientations: range to both planets, speed and orbital energy relative to the star, and fuel. Dotted lines mark burns.}{fig:telemetry}
+\widefig{c3_corrections}{Course-correction log: predicted miss of the aim point at each check, and the correction burns.}{fig:corr}
+
+% =====================================================================
+\section{The orbit}\label{sec:orbit}
+From one orientation relative to the planet we get $r$, $v_r$ and $v_\theta$.
+The two-body formulas~\cite{ast2000notes} then give the orbit:
+\begin{gather}
+  h=rv_\theta,\quad E=\tfrac12v^2-\frac{GM}{r},\quad a=-\frac{GM}{2E},\nonumber\\
+  e=\sqrt{1+\frac{2Eh^2}{(GM)^2}},\quad P=2\pi\sqrt{\frac{a^3}{GM}}.
+\end{gather}
+Right after injection, $a=\val{orbit-a}$\,km.
+The periapsis and apoapsis are both \val{orbit-peri}\,km, and the period is \val{orbit-P}\,h.
+Over \val{n-orbits-check} orbits, $a$ varies by $\val{orbit-a-var}$ (relative), and $e$ stays below \val{orbit-e} (\cref{fig:orbit}).
+
+After a coast of \val{long-coast}\,yr the spacecraft is still in orbit, between \val{long-peri} and \val{long-apo}\,km.
+That orbit has shrunk by \val{api-shrink}\%.
+Our own simulator keeps $a$ constant over the same time.
+The shrinking comes from the API's RK45 integrator, which is not symplectic and slowly loses energy~\cite{hairer2006}.
+It is not real physics.
+
+\widefig{d_orbit}{The orbit around planet \val{dest}. Left: orientations over \val{n-orbits-check} orbits and over \val{long-coast}\,yr. Middle: orbital elements from each orientation. Right: long-term evolution in the API and in our simulator.}{fig:orbit}
+
+% =====================================================================
+\section{Discussion and conclusion}
+Three insights carried the trip.
+\begin{itemize}
+\item \textbf{The Oberth effect.} Burning right after launch made the departure cost \val{plan-boost}\,m/s instead of \val{vinf-dep}\,km/s.
+\item \textbf{Choosing the orbit radius.} Picking it at $2GM/v_\infty^2$ minimised the capture burn.
+\item \textbf{Measuring, not trusting.} Re-aiming from the measured state and correcting early kept the corrections at the cm/s level.
+\end{itemize}
+The total of \val{real-total}\,km/s compares with \val{hohmann-dv}\,km/s for Part 3's simple Hohmann estimate.
+
+The approximations are as follows.
+\begin{itemize}
+\item The burns are instantaneous. The real ones would take seconds to minutes, which is short compared with the trip.
+\item The planets are on Kepler orbits. This is also what the API assumes, so our simulation matches its flight.
+\end{itemize}
+The spacecraft is now in orbit around planet \val{dest} with \val{fuel-final}\,kg of fuel, ready for Part 6.
+
+\bibliography{../../common/paper/references}
+
+\appendix
+\section{Mission log}
+\begin{missionbox}{Part 5 key numbers (seed \val{seed})}
+Launch & $t=\val{t-launch}$\,yr, site $\val{launch-angle}^\circ$ \\
+Travel time & \val{arrival-days}\,days \\
+Departure / injection & \val{real-departure} / \val{real-injection}\,m/s \\
+Corrections & \val{n-corrections}, total \val{correction-total}\,cm/s \\
+Orbit radius / period & \val{orbit-a}\,km / \val{orbit-P}\,h \\
+Total $\Delta v$ & \val{real-total}\,km/s \\
+Fuel left & \val{fuel-final}\,kg \\
+Launch / orientation check & \val{launch-verified} / \val{orient-verified} \\
+\end{missionbox}
+
+\end{document}

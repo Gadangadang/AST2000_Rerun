@@ -7,6 +7,8 @@ Part 5, challenges C and D: the real flight with ast2000tools.
 2. Departure boost: re-aimed from the actual state after launch. Our launch
    prediction is ~1 km and ~7 m/s off the API's, which would grow to a big
    miss after four months.
+   Videos for MCAst: journey_cruise.xml (departure to the last day before
+   arrival) and journey_arrival.xml (approach, injection and 10 orbits).
 3. Course corrections: at a few points on the way the spacecraft orients
    itself (travel.orient), and Newton's method (planner.aim) finds the small
    boost that puts it back on target from where it really is. Each correction
@@ -29,6 +31,7 @@ from common.paths import use_parts
 use_parts(1, 2, 3, 4)
 
 import io
+import json
 import shutil
 from contextlib import redirect_stdout
 
@@ -39,8 +42,10 @@ from ast2000tools.space_mission import SpaceMission
 
 import orientation
 import planner
-from common.config import JOURNEY_MISSION_FILE, MCAST_DATA_DIR, XML_DIR, get_mission
+from common.config import JOURNEY_MISSION_FILE, JOURNEY_STATE_FILE, MCAST_DATA_DIR, XML_DIR, get_mission
 from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, PLANET_COLORS, VIOLET, save
+from common.report import record, record_many
+from destination import capture_distance
 from generalised_launch import launch_state
 from orbit_analysis import orbital_elements, polar_components
 from orbits import kepler_state
@@ -77,9 +82,11 @@ def launch_for_real(ctx, plan):
     quiet(mission.launch_rocket)
     _, text = quiet(mission.verify_launch_result, after)
     print("C     launch: " + ("VERIFIED" if mission.launch_result_verified else text))
+    record("launch-verified", "passed" if mission.launch_result_verified else "FAILED")
     library = orientation.sky_pictures.load_or_build_library(orientation.sky_pictures.load_sky())
     angle, velocity, position = orientation.orient(mission, library)
     _, text = quiet(mission.verify_manual_orientation, position, velocity, angle)
+    record("orient-verified", "passed" if mission.manual_orientation_verified else "FAILED")
     print("      manual orientation (Part 4 software): "
           + ("VERIFIED" if mission.manual_orientation_verified else text))
     return mission
@@ -95,6 +102,8 @@ class Flight:
         self.travel.verbose = False
         self.samples = []  # (t, r, v) from orientations
         self.boosts = []  # (t, dv, name)
+        self.fuel_log = [(self.travel.orient()[0], self.travel.remaining_fuel_mass)]  # (t, fuel) after each boost
+        self.corrections = []  # (t, predicted miss [km], dv or None) at every planned correction point
 
     def orient(self):
         t, r, v = self.travel.orient()
@@ -105,6 +114,7 @@ class Flight:
         t, _, _ = self.travel.orient()
         self.travel.boost(dv)
         self.boosts.append((t, np.array(dv), name))
+        self.fuel_log.append((t, self.travel.remaining_fuel_mass))
 
     def coast_to(self, t_end, n_samples=1):
         """Coast in steps, orienting along the way (for the figures)."""
@@ -128,6 +138,9 @@ def fly(ctx, plan, video=True):
     t, r, v = flight.orient()
     dv, miss = planner.aim(sim, t, r, v, plan.dv_boost, plan.t_target, plan.target)
     flight.boost(dv, "departure")
+    if video:  # The whole cruise, camera on the destination (a growing dot), until the arrival video starts
+        flight.travel.look_in_direction_of_planet(dest)
+        flight.travel.start_video()
     print(f"C     departure boost {np.linalg.norm(dv) * AU_PER_YR:.2f} m/s (plan: "
           f"{np.linalg.norm(plan.dv_boost) * AU_PER_YR:.2f}); predicted miss {miss * KM:.2f} km")
 
@@ -142,6 +155,7 @@ def fly(ctx, plan, video=True):
         if correct:
             dv, miss = planner.aim(sim, t, r, v, np.zeros(2), plan.t_target, plan.target)
             flight.boost(dv, f"correction {k + 1}")
+        flight.corrections.append((t, off, dv if correct else None))
         print(f"C     t = {t:.5f} yr: heading {off:10.1f} km off the aim point -> "
               + (f"correction {np.linalg.norm(dv) * AU_PER_YR * 100:8.3f} cm/s" if correct else "on course"))
 
@@ -150,11 +164,15 @@ def fly(ctx, plan, video=True):
     approach = sim.simulate(t, r, v, plan.t_target + 0.01, dense=True)
     t_close, d_close = sim.closest_approach(approach, dest)[0]
     if video:
+        quiet(flight.travel.finish_video, filename="journey_cruise.xml", number_of_frames=1000)
+        copy_video("journey_cruise.xml")
         flight.travel.look_in_direction_of_planet(dest)
         flight.travel.start_video()
     t, r, v = flight.coast_to(t_close, 10)
     dv_inj = planner.injection_boost(ctx, t, r, v)
     flight.boost(dv_inj, "injection")
+    record("closest", d_close * KM, "{:,.0f}")
+    record("t-closest", t, "{:.5f}")
     print(f"C     closest approach at t = {t:.6f} yr, {d_close * KM:,.0f} km from planet {dest} "
           f"(planned {plan.r_orbit * KM:,.0f} km); injection {np.linalg.norm(dv_inj) * AU_PER_YR:,.1f} m/s")
     return mission, flight, video
@@ -251,6 +269,84 @@ def plot_flight(ctx, plan, flight):
     save(fig, "c1_flight")
 
 
+def plot_telemetry(ctx, plan, flight):
+    """
+    Mission-control telemetry for the cruise, from the spacecraft's own orientations:
+    distances to both planets, speed and orbital energy relative to the star, and fuel.
+    """
+    t, r, v = samples_array([s for s in flight.samples if s[0] <= plan.t_arrival + 0.002])
+    days = (t - plan.t_launch) * 365.25
+    planets, _ = kepler_state(ctx.system, t)
+    GM_star = const.G_sol * ctx.system.star_mass
+    d_home = np.linalg.norm(r - planets[:, 0].T, axis=1) * KM
+    d_dest = np.linalg.norm(r - planets[:, ctx.destination].T, axis=1) * KM
+    speed = np.linalg.norm(v, axis=1) * AU_PER_YR / 1e3
+    energy = (0.5 * np.sum(v ** 2, axis=1) - GM_star / np.linalg.norm(r, axis=1)) * AU_PER_YR ** 2 / 1e6  # [MJ/kg]
+    boosts = [((tb - plan.t_launch) * 365.25, name) for tb, _, name in flight.boosts if tb <= plan.t_arrival + 0.002]
+
+    fig, axes = plt.subplots(2, 2, figsize=(15, 9), sharex=True)
+    ax = axes[0, 0]
+    ax.semilogy(days, d_home, color=PLANET_COLORS[0], label="to the home planet")
+    ax.semilogy(days, d_dest, color=PLANET_COLORS[ctx.destination], label=f"to planet {ctx.destination}")
+    ax.axhline(capture_distance(ctx.system, ctx.destination, ctx.system.semi_major_axes[ctx.destination]) * KM,
+               color=AQUA, ls="--", lw=1, label="capture distance")
+    ax.set_ylabel("distance [km]")
+    ax.set_title("Range", fontsize=10)
+    ax.legend(fontsize=8, loc="center right")
+    ax = axes[0, 1]
+    ax.plot(days, speed, color=INK)
+    ax.set_ylabel("speed relative to the star [km/s]")
+    ax.set_title("Speed relative to the star: falls as we climb outwards (Kepler's 2nd law);\n"
+                 "in orbit at the end it swings with the orbital motion", fontsize=10)
+    ax = axes[1, 0]
+    ax.plot(days, energy, color=VIOLET)
+    ax.set_ylabel("orbital energy per kg [MJ/kg]")
+    ax.set_xlabel("days since launch")
+    ax.set_title("Energy relative to the star: constant in the cruise; the planets' gravity changes it\n"
+                 "while climbing out of the home planet's well and falling into the destination's", fontsize=10)
+    ax = axes[1, 1]
+    tf = np.array([(x - plan.t_launch) * 365.25 for x, _ in flight.fuel_log] + [days[-1]])
+    fuel = np.array([f for _, f in flight.fuel_log] + [flight.fuel_log[-1][1]])
+    ax.step(tf, fuel, where="post", color=ORANGE)
+    ax.set_ylabel("fuel [kg]")
+    ax.set_xlabel("days since launch")
+    ax.set_title(f"Fuel: {fuel[0]:,.0f} kg after launch, {fuel[-1]:,.0f} kg in orbit", fontsize=10)
+    for ax in axes.flat:
+        for day, name in boosts:
+            ax.axvline(day, color=BLUE if name == "departure" else VIOLET if name == "injection" else ORANGE,
+                       lw=0.8, ls=":", zorder=0)
+    fig.suptitle("C  Flight telemetry from the spacecraft's own orientations (dotted: boosts)", fontsize=12)
+    save(fig, "c2_telemetry")
+
+
+def plot_corrections(ctx, plan, flight):
+    """Course-correction log: how far off the aim point we were heading, and what fixing it cost."""
+    days = np.array([(t - plan.t_launch) * 365.25 for t, _, _ in flight.corrections])
+    off = np.array([o for _, o, _ in flight.corrections])
+    dv = np.array([np.linalg.norm(d) * AU_PER_YR * 100 if d is not None else np.nan for _, _, d in flight.corrections])
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+    ax1.semilogy(days, off, "o-", color=INK, ms=7)
+    ax1.axhline(MISS_TOLERANCE_KM, color=ORANGE, ls="--", lw=1.2, label=f"correct when off by more than {MISS_TOLERANCE_KM} km")
+    for d, o, c in zip(days, off, dv):
+        ax1.annotate("corrected" if np.isfinite(c) else "on course", (d, o), xytext=(5, 6), textcoords="offset points",
+                     fontsize=8, color=MUTED)
+    ax1.set_xlabel("days since launch")
+    ax1.set_ylabel("predicted miss of the aim point [km]")
+    ax1.set_title("Before each correction: where would we arrive?", fontsize=10)
+    ax1.legend(fontsize=8)
+    ax2.bar(np.arange(len(dv)), np.nan_to_num(dv), color=ORANGE, width=0.6)
+    for i, c in enumerate(dv):
+        ax2.annotate(f"{c:.2f} cm/s" if np.isfinite(c) else "none", (i, np.nan_to_num(c)), xytext=(0, 3),
+                     textcoords="offset points", ha="center", fontsize=8)
+    ax2.set_xticks(np.arange(len(dv)))
+    ax2.set_xticklabels([f"day {d:.0f}" for d in days])
+    ax2.set_ylabel("correction [cm/s]")
+    ax2.set_title(f"Corrections cost {np.nansum(dv):.2f} cm/s in total: tiny, because they come early", fontsize=10)
+    fig.suptitle("C  Course-correction log", fontsize=12)
+    save(fig, "c3_corrections")
+    return np.nansum(dv), int(np.isfinite(dv).sum())
+
+
 def predicted_orbit(ctx, t0, r0, v0, duration=LONG_COAST, n_out=400):
     """Our own simulation of the orbit from the state right after injection (for comparison with the API)."""
     sim = make_simulator(ctx.system, t0 - 0.01, t0 + duration + 0.01)
@@ -324,13 +420,39 @@ def main(ctx=None, plan=None, video=True):
                              ("periapsis", "km", KM), ("apoapsis", "km", KM)):
         print(f"      {key:>9} = {first[key][0] * scale:14.6g} {unit}")
     plot_flight(ctx, plan, flight)
+    plot_telemetry(ctx, plan, flight)
+    correction_total, n_corrections = plot_corrections(ctx, plan, flight)
     elements, long_elements = plot_orbit(ctx, first, orbit_samples, long_samples)
+    boosts = {name: np.linalg.norm(dv) * AU_PER_YR for _, dv, name in flight.boosts}
+    scale = {"r": KM, "a": KM, "b": KM, "periapsis": KM, "apoapsis": KM, "P": const.yr / 3600}
+    record_many({
+        "real-departure": (boosts["departure"], "{:,.2f}"), "real-injection": (boosts["injection"], "{:,.1f}"),
+        "n-corrections": (n_corrections, "{:d}"),
+        "n-corrections-word": ["No", "One", "Two", "Three", "Four", "Five", "Six"][min(n_corrections, 6)], "n-correction-points": (len(CORRECTIONS), "{:d}"),
+        "correction-total": (correction_total, "{:.2f}"), "miss-tolerance": (MISS_TOLERANCE_KM, "{:d}"),
+        "first-off": (flight.corrections[0][1], "{:,.0f}"), "last-off": (flight.corrections[-1][1], "{:,.1f}"),
+        "real-total": (sum(boosts.values()) / 1e3, "{:.2f}"),
+        "orbit-r": (first["r"][0] * KM, "{:,.0f}"), "orbit-a": (first["a"][0] * KM, "{:,.0f}"),
+        "orbit-e": (elements["e"].max(), "{:.1e}"), "orbit-P": (first["P"][0] * const.yr / 3600, "{:.2f}"),
+        "orbit-peri": (first["periapsis"][0] * KM, "{:,.0f}"), "orbit-apo": (first["apoapsis"][0] * KM, "{:,.0f}"),
+        "orbit-a-var": (np.ptp(elements["a"]) / elements["a"].mean(), "{:.1e}"),
+        "n-orbits-check": (N_ORBITS_CHECK, "{:d}"), "long-coast": (LONG_COAST, "{:g}"),
+        "long-peri": (long_elements["periapsis"][-1] * KM, "{:,.0f}"), "long-apo": (long_elements["apoapsis"][-1] * KM, "{:,.0f}"),
+        "api-shrink": ((1 - long_elements["a"][-1] / elements["a"][0]) * 100, "{:.1f}"),
+        "fuel-final": (flight.fuel, "{:,.0f}"),
+    })
     print(f"D     over {N_ORBITS_CHECK} orbits: a varies {np.ptp(elements['a']) / elements['a'].mean():.1e} "
           f"(relative), e between {elements['e'].min():.1e} and {elements['e'].max():.1e}")
     print(f"      after {LONG_COAST} yr: periapsis {long_elements['periapsis'][-1] * KM:,.0f} km, apoapsis "
           f"{long_elements['apoapsis'][-1] * KM:,.0f} km: still in orbit")
     flight.travel.record_destination(ctx.destination)
     quiet(SpaceMission.save, JOURNEY_MISSION_FILE, mission)
+    with open(JOURNEY_STATE_FILE, "w") as f:  # What the saved mission forgets, for Part 6
+        t_end, r_end, v_end = flight.orient()
+        r_rel, v_rel = relative_state(ctx, t_end, r_end, v_end)
+        json.dump({"fuel_left": flight.fuel, "exhaust_speed": ctx.exhaust_speed, "destination": int(ctx.destination),
+                   "time_in_orbit": float(t_end), "position_relative_m": (r_rel[0] * const.AU).tolist(),
+                   "velocity_relative_ms": (v_rel[0] * AU_PER_YR).tolist()}, f, indent=2)
     print(f"      fuel left {flight.fuel:,.0f} kg; destination recorded; mission saved to "
           f"{os.path.basename(JOURNEY_MISSION_FILE)} for Part 6")
     return mission, flight

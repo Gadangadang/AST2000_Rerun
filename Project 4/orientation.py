@@ -26,6 +26,7 @@ import io
 from contextlib import redirect_stdout
 
 import ast2000tools.constants as const
+import matplotlib.pyplot as plt
 import numpy as np
 from ast2000tools.space_mission import SpaceMission
 from PIL import Image
@@ -34,6 +35,8 @@ import doppler
 import sky_pictures
 import trilateration
 from common.config import MISSION_FILE, ORIENTED_MISSION_FILE
+from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, save
+from common.report import record
 
 PICTURE_FILE = os.path.join(HERE, "sky_picture.png")
 AU_PER_YR = const.AU / const.yr
@@ -62,6 +65,55 @@ def predicted_state(mission):
     _, position, velocity, _ = generalised_launch.launch_state(launch, planet, mission.system, TIME_OF_LAUNCH,
                                                                LAUNCH_ANGLE)
     return position, velocity
+
+
+def plot_summary(mission, angle, velocity, position, pred_position, pred_velocity, library):
+    """Mission-control view of the fix: the picture, our best reference, and the three measurements vs. prediction."""
+    picture = np.array(Image.open(PICTURE_FILE).convert("RGB"))
+    sky = sky_pictures.load_sky()
+    reference = sky_pictures.make_picture(sky, np.radians(angle))
+    fig = plt.figure(figsize=(17, 8.5))
+    grid = fig.add_gridspec(2, 3, height_ratios=[1.15, 1])
+    for i, (img, title) in enumerate(((picture, "What the spacecraft's camera sees"),
+                                      (reference, f"Our projection at the angle found, {angle:.2f}$^\\circ$"),
+                                      (None, "difference (std {:.2f} per colour)".format(
+                                          np.std(picture.astype(int) - reference.astype(int)))))):
+        ax = fig.add_subplot(grid[0, i])
+        if img is None:
+            ax.imshow((picture.astype(int) - reference.astype(int)).mean(axis=2), cmap="gray", vmin=-30, vmax=30)
+        else:
+            ax.imshow(img)
+        ax.set_title(title, fontsize=10)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.grid(False)
+    # verify_manual_orientation's rules (ast2000tools source): position within 0.01 AU, velocity within 1% of |v|
+    tolerances = {"position": 0.01 * const.AU / 1e3, "velocity": 0.01 * np.linalg.norm(velocity) * AU_PER_YR}
+    rows = [("position [km]", np.linalg.norm(position - pred_position) * const.AU / 1e3, tolerances["position"]),
+            ("velocity [m/s]", np.linalg.norm(velocity - pred_velocity) * AU_PER_YR, tolerances["velocity"])]
+    ax = fig.add_subplot(grid[1, :2])
+    y = np.arange(len(rows))
+    ax.barh(y, [r[1] for r in rows], color=[BLUE, ORANGE], height=0.45, label="onboard fix minus launch prediction")
+    ax.scatter([r[2] for r in rows], y, marker="|", s=900, color=INK, lw=2.5, label="API tolerance")
+    for yi, r in zip(y, rows):
+        ax.text(r[1], yi, f"  {r[1]:.2f}", va="center", fontsize=10)
+    ax.set_xscale("log")
+    ax.set_yticks(y)
+    ax.set_yticklabels([r[0] for r in rows])
+    ax.set_title("Two independent routes agree: instruments (Part 4) vs. launch simulation (Parts 1 and 3)", fontsize=10)
+    ax.legend(fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=2)
+    ax.set_ylim(-0.6, len(rows) - 0.4)
+    ax.grid(axis="y", visible=False)
+    ax = fig.add_subplot(grid[1, 2])
+    ax.axis("off")
+    text = (f"t = {mission.time_after_launch:.6e} yr\n\n"
+            f"pointing   {angle:.2f} deg\n"
+            f"velocity   ({velocity[0]:.4f}, {velocity[1]:.4f}) AU/yr\n"
+            f"position   ({position[0]:.7f}, {position[1]:.7f}) AU\n\n"
+            f"API: {'VERIFIED' if mission.manual_orientation_verified else 'not verified'}")
+    ax.text(0, 0.5, text, family="monospace", fontsize=11, va="center")
+    fig.suptitle("MO  Manual orientation right after launch", fontsize=12)
+    save(fig, "e_orientation_summary")
 
 
 def main(library=None):
@@ -93,6 +145,12 @@ def main(library=None):
         with redirect_stdout(io.StringIO()):
             SpaceMission.save(ORIENTED_MISSION_FILE, mission)
         print(f"      VERIFIED. Mission saved to {os.path.basename(ORIENTED_MISSION_FILE)} for Part 5.")
+    plot_summary(mission, angle, velocity, position, pred_position, pred_velocity, library)
+    record("mo-verified", "passed" if mission.manual_orientation_verified else "FAILED")
+    record("mo-angle", angle, "{:.2f}")
+    record("mo-pos-diff", np.linalg.norm(position - pred_position) * const.AU / 1e3, "{:.1f}")
+    record("mo-vel-diff", np.linalg.norm(velocity - pred_velocity) * AU_PER_YR, "{:.1f}")
+    record("mo-time", mission.time_after_launch, "{:.4e}")
     return mission, (angle, velocity, position)
 
 

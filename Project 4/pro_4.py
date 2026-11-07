@@ -28,12 +28,14 @@ import orientation
 import sky_pictures
 import trilateration
 from common.config import MISSION_FILE
+from common.report import record_system
 from common.runner import banner
 
 
 
 def main():
     start = time.perf_counter()
+    record_system()
     library = sky_pictures.load_or_build_library(sky_pictures.load_sky())
     banner("Manual orientation (uses A-D below)")
     orientation.main(library)
