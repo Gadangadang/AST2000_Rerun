@@ -51,10 +51,11 @@ import numpy as np
 from ast2000tools.space_mission import SpaceMission
 from PIL import Image
 
-from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, SERIES, VIOLET, save
+from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, VIOLET, save
+from common.release import fetch
 from common.report import record
 
-SKY_FILE = os.path.join(HERE, "himmelkule.npy")
+SKY_FILE = os.path.join(HERE, "himmelkule.npy")  # Course file, on the GitHub release (common/release.py)
 SAMPLE_FILES = {0.0: os.path.join(HERE, "sample0000.png")}  # Pictures with a known pointing angle
 EXTRA_SAMPLE = os.path.join(HERE, "sample0200.png")  # Angle not stated: our software finds it
 LIBRARY_FILE = os.path.join(HERE, "reference_library.npz")
@@ -66,6 +67,11 @@ GRIDLINE = "#d8d7d2"
 
 
 # ===================================================================== sky map
+def have_sky():
+    """Is the sky sphere here, or downloadable from the GitHub release?"""
+    return os.path.exists(SKY_FILE) or fetch(SKY_FILE)
+
+
 def load_sky():
     """RGB colour of every HEALPix pixel, shape (n_pixels, 3), uint8. Columns 2-4 of the file are R, G, B."""
     return np.load(SKY_FILE)[:, 2:5].astype(np.uint8)
@@ -295,8 +301,8 @@ def plot_pointing_robustness(sky, library, noise_levels=(0, 4, 16, 32, 64, 128),
 
 def main(extra_pictures=()):
     """extra_pictures: (name, path) of pictures to analyse as well (e.g. the spacecraft's own)."""
-    if not os.path.exists(SKY_FILE):
-        raise FileNotFoundError(f"{SKY_FILE} is missing: download himmelkule.npy from the course page")
+    if not have_sky():
+        raise FileNotFoundError(f"{SKY_FILE} is missing, and could not be downloaded from the GitHub release")
     sky = load_sky()
 
     # The vectorised lookup must agree with the API exactly

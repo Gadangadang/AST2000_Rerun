@@ -51,7 +51,8 @@ import numpy as np
 from scipy import constants as sc
 from scipy import optimize, signal
 
-from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, SERIES, VIOLET, save
+from common.plot_style import AQUA, BLUE, INK, MUTED, ORANGE, SERIES, save
+from common.release import fetch
 from common.report import record, record_many
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -61,10 +62,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # per point, so lossless storage cannot get much smaller. Loads in ~0.05 s.
 # Course files (.txt, or the .zip as downloaded) dropped in this folder or in spectra/ are converted on first use;
 # `python spectrum.py --import` converts every one it finds and deletes the originals.
-# spectra/ is not in git (2.8 GB): the files live on the repository's GitHub release RELEASE_TAG, and a missing
-# one is downloaded when needed (gh CLI, logged in; the release is private like the repository).
-# `python spectrum.py --download` fetches all of them.
-RELEASE_TAG = "spectra"
+# spectra/ is not in git (2.8 GB): the files live on the repository's GitHub release (common/release.py), and a
+# missing one is downloaded when needed. `python spectrum.py --download` fetches all of them.
 SPECTRA_DIR = os.path.join(HERE, "spectra")
 SPECTRUM_FILE = os.path.join(SPECTRA_DIR, "spectrum_seed{:02d}.parquet")
 NOISE_FILE = os.path.join(SPECTRA_DIR, "sigma_noise.parquet")
@@ -175,27 +174,8 @@ def import_course_files(delete=True, workers=4):
 
 
 def download(names):
-    """
-    Fetch spectra files (names or glob patterns) from the repository's GitHub release into spectra/.
-    Goes through a temporary folder, so an interrupted download never leaves a half file. Returns False
-    if the gh CLI is missing or a file is not on the release.
-    """
-    import shutil
-    import subprocess
-    if not shutil.which("gh"):
-        return False
-    staging = os.path.join(SPECTRA_DIR, ".download")
-    os.makedirs(staging, exist_ok=True)
-    args = [arg for name in names for arg in ("--pattern", name)]
-    print(f"      downloading {' '.join(names)} from the GitHub release '{RELEASE_TAG}'", flush=True)
-    done = subprocess.run(["gh", "release", "download", RELEASE_TAG, *args, "--dir", staging, "--clobber"],
-                          cwd=HERE, capture_output=True, text=True)
-    for name in os.listdir(staging):
-        os.replace(os.path.join(staging, name), os.path.join(SPECTRA_DIR, name))
-    shutil.rmtree(staging, ignore_errors=True)
-    if done.returncode:
-        print(f"      download failed: {done.stderr.strip()}")
-    return done.returncode == 0
+    """Fetch spectra files from the repository's GitHub release into spectra/. Returns True if every file arrived."""
+    return all([fetch(os.path.join(SPECTRA_DIR, name)) for name in names])
 
 
 def have_spectrum(seed_digits):
@@ -655,6 +635,6 @@ if __name__ == "__main__":
     if "--import" in sys.argv:  # Convert the course files to Parquet (add --keep to keep the originals)
         import_course_files(delete="--keep" not in sys.argv)
     elif "--download" in sys.argv:  # Every spectrum from the GitHub release
-        download(["*.parquet"])
+        download([os.path.basename(SPECTRUM_FILE.format(d)) for d in range(100)] + [os.path.basename(NOISE_FILE)])
     else:
         main()

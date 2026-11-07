@@ -1,0 +1,8 @@
+# Python 3.9 (what the code is run with). LaTeX (latexmk + REVTeX) is only needed for the papers.
+ast2000tools==1.7.4
+numpy==1.26.4
+scipy==1.13.1
+matplotlib==3.8.0
+pandas==2.1.4
+pyarrow==11.0.0
+Pillow==10.0.1

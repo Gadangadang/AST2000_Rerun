@@ -1,0 +1,16 @@
+{
+  "seed": 42716,
+  "spectrum": true,
+  "detected": [
+    "H2O",
+    "CH4",
+    "CO"
+  ],
+  "marginal": [
+    "O2"
+  ],
+  "v_common": 781.1272917384904,
+  "marginal_lines": [
+    "O2 760"
+  ]
+}
