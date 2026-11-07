@@ -1,0 +1,124 @@
+% AST2000 Part 7, challenge D: exploring the star (exam-style answers, a separate hand-in).
+% Compile: cd "Project 7/paper" && latexmk -pdf part7_star.tex   (or: python build_papers.py 7 from the repo root)
+% Every number written as \val{key} comes from results.tex, made by star.py (pro_7.py).
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{../../common/paper/ast2000}
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{0pt}
+
+\title{AST2000 Part 7D: Exploring Our Star}
+\author{Sakarias Frette}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+Solar system seed \val{seed}.
+Our star has mass $M=\val{star-M}\,\Msun$, radius $R=\val{star-R}\,R_\odot$ ($\val{star-R-km}$\,km) and surface temperature $T=\val{star-T}$\,K.
+The numbers below are computed by \code{Project 7/star.py}.
+
+% =====================================================================
+\section*{1. Is our star a main-sequence star?}
+A black body of radius $R$ and surface temperature $T$ radiates $\sigma T^4$ per unit area from its whole surface:
+\begin{equation}
+  L=4\pi R^2\sigma T^4=\val{star-L}\,\mathrm{W}=\val{star-L-sun}\,L_\odot .
+\end{equation}
+In an HR diagram (\cref{fig:hr}) our star sits on the main sequence, right next to the Sun.
+That fits its mass: $\val{star-M}\,\Msun$ is slightly more than the Sun, so on the main sequence it should be slightly hotter and brighter, as it is.
+It is a main-sequence star, burning hydrogen in its core.
+
+\begin{figure}[h]\centering\safegraphic[width=0.62\textwidth]{d1_hr_diagram}
+\caption{HR diagram: 50\,000 stars from \code{ast2000tools}' \code{StarPopulation}, our star and the Sun.}\label{fig:hr}\end{figure}
+
+% =====================================================================
+\section*{2. Core temperature}
+\textbf{Assumptions:}
+\begin{itemize}
+\item uniform density $\rho_0=M/(\tfrac43\pi R^3)=\val{star-rho0}$\,kg/m$^3$;
+\item hydrostatic equilibrium;
+\item an ideal gas;
+\item composition 75\% hydrogen and 25\% helium by mass.
+\end{itemize}
+
+\subsection*{(a) The mass profile}
+With uniform density, the mass inside radius $r$ is the density times the volume of that sphere:
+\begin{equation}
+  M(r)=\int_0^r\rho_0\,4\pi r'^2\,\dd r'=\frac{4\pi}{3}\rho_0r^3=M\frac{r^3}{R^3}.
+\end{equation}
+
+\subsection*{(b) The temperature gradient}
+\textit{Hydrostatic equilibrium.}
+A shell of gas does not move: the pressure difference across it balances the gravity of the mass inside it (only the mass inside pulls, by the shell theorem):
+\begin{equation}
+  \frac{\dd P}{\dd r}=-\frac{GM(r)\rho_0}{r^2}=-\frac{4\pi}{3}G\rho_0^2\,r .
+\end{equation}
+
+\textit{Ideal gas.}
+$P=nkT=\rho_0kT/(\mu m_H)$.
+Since $\rho_0$ is constant, $\dd P/\dd r=(\rho_0k/\mu m_H)\,\dd T/\dd r$.
+Equating the two expressions gives
+\begin{equation}
+  \frac{\dd T}{\dd r}=-\frac{4\pi}{3}G\rho_0\frac{\mu m_H}{k}\,r .
+\end{equation}
+
+\textit{Mean molecular weight.}
+In the hot core all atoms are fully ionised.
+Per unit mass there are $X/m_H$ hydrogen nuclei, each giving 2 particles (proton and electron), and $Y/4m_H$ helium nuclei, each giving 3 particles (nucleus and 2 electrons).
+So $1/\mu=2X+\tfrac34Y$, which gives $\mu=\val{star-mu}$.
+
+\subsection*{(c) The core temperature}
+Integrating from the centre to the surface:
+\begin{equation}
+  T(R)-T_c=-\frac{4\pi}{3}G\rho_0\frac{\mu m_H}{k}\int_0^Rr\,\dd r=-\frac{2\pi}{3}G\rho_0\frac{\mu m_H}{k}R^2,
+\end{equation}
+so
+\begin{equation}
+  T_c=T(R)+\frac{2\pi}{3}G\rho_0\frac{\mu m_H}{k}R^2=\val{star-Tc}\times10^6\,\mathrm{K}.
+\end{equation}
+The temperature falls as a parabola from the centre to the surface (\cref{fig:core}, left).
+
+If the gas were \emph{neutral} ($1/\mu=X+Y/4$, $\mu=\val{star-mu-neutral}$), $T_c$ would double to \val{star-Tc-neutral}\,MK, close to the real Sun's 15.7\,MK.
+That agreement is accidental: the uniform-density model underestimates the core temperature, and the wrong $\mu$ happens to compensate.
+
+% =====================================================================
+\section*{3. Energy production and luminosity}
+Since $T_c=\val{star-Tc}$\,MK is far below 90\,MK, the core fuses hydrogen through the pp chain and the CNO cycle (\val{star-branch}).
+The core composition is $X=\val{star-X}$, $Y=\val{star-Y}$, $X_{\rm CNO}=\val{star-Xcno}$.
+Following the AST2000 lecture notes, the energy released per kg of core is approximated by power laws in temperature ($T_6=T/10^6$\,K):
+\begin{align}
+  \varepsilon_{pp}&=\varepsilon_{0,pp}X^2\rho\,T_6^4, &\varepsilon_{0,pp}&=\val{star-eps0-pp}\,\mathrm{W\,m^3\,kg^{-2}},\\
+  \varepsilon_{\rm CNO}&=\varepsilon_{0,\rm CNO}XX_{\rm CNO}\rho\,T_6^{20}, &\varepsilon_{0,\rm CNO}&=\val{star-eps0-cno}\,\mathrm{W\,m^3\,kg^{-2}}.
+\end{align}
+Reactions happen in the core, $r<0.2R$, which holds a fraction $0.2^3=\val{star-core-mass}$ of the mass.
+Its temperature is taken as $T_c$ throughout.
+\begin{itemize}
+\item $\varepsilon_{pp}=\val{star-eps-pp}$\,W/kg.
+\item $\varepsilon_{\rm CNO}=\val{star-eps-cno}$\,W/kg, negligible at this temperature (its $T^{20}$ only takes over above $\sim$18\,MK).
+\end{itemize}
+The luminosity is then
+\begin{equation}
+  L_{\rm core}=(\varepsilon_{pp}+\varepsilon_{\rm CNO})\,M_{\rm core}=\val{star-L-core}\,\mathrm{W}=\val{star-L-core-sun}\,L_\odot ,
+\end{equation}
+which is \val{star-L-ratio} times smaller than the luminosity from question 1.
+The surface temperature this luminosity implies,
+\begin{equation}
+  T=\left(\frac{L_{\rm core}}{4\pi R^2\sigma}\right)^{1/4}=\val{star-T-core-model}\,\mathrm{K},
+\end{equation}
+is far below the observed \val{star-T}\,K.
+
+\begin{figure}[h]\centering\safegraphic[width=\textwidth]{d2_core}
+\caption{Left: temperature profile of the uniform-density star. Right: luminosity of the core against core temperature, for the pp chain and the CNO cycle, compared with the observed luminosity.}\label{fig:core}\end{figure}
+
+\subsection*{Discussion}
+The model fails by almost four orders of magnitude.
+The culprit is the uniform-density assumption, and \cref{fig:core} (right) shows why it matters so much.
+\begin{itemize}
+\item \textbf{Density.} A real star is centrally condensed. The Sun's centre is about 100 times denser than its average. A uniform star underestimates the core density, and $\varepsilon\propto\rho$.
+\item \textbf{Temperature.} For the same reason it underestimates the core pressure, and so the temperature. With $\varepsilon\propto T^4$ (pp) and $T^{20}$ (CNO), small temperature errors become huge luminosity errors. Matching the observed luminosity at our $\rho_0$ would need $T_c\approx\val{star-T-needed}$\,MK; with the higher real density, less would do.
+\item \textbf{Constant core temperature.} Assuming one temperature throughout the core overestimates the outer parts of the core, but this is a smaller effect.
+\end{itemize}
+Question 1, which uses only the observed radius and temperature, is the reliable value.
+The core model shows that the observed luminosity requires a hot, dense, centrally condensed core.
+
+\end{document}
