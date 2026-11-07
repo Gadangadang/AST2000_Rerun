@@ -6,12 +6,15 @@ The whole AST2000 project in one go: every part that is done so far, in order.
     .venv/bin/python run_all.py --username abc123  # someone else's solar system
     .venv/bin/python run_all.py --seed 12345       # ... or pick the seed directly
     .venv/bin/python run_all.py --parts 3 4        # only some parts (later parts need earlier outputs)
+    .venv/bin/python run_all.py --papers           # ... and compile the papers afterwards (build_papers.py)
 
 Each part runs in its own folder (pro_N.py), so its figures land in "Project N/figures".
 A new seed overwrites the generated files (figures, missions, orbits), which are all
 regenerated here anyway. Each part feeds the next: the launch (1) is reused by the
 orbits and launch windows (2, 3), the launched mission by the orientation (4), and
-all of them by the journey (5), which leaves the spacecraft in orbit for Part 6.
+all of them by the journey (5), which leaves the spacecraft in orbit for Part 6
+(low orbit, atmosphere and landing site; it uses the course's spectrum for the seed
+if it is there, else the drag probe alone), and the landing and the star (7).
 """
 import argparse
 import os
@@ -26,6 +29,8 @@ PARTS = {  # part -> (folder, script, extra arguments in --quick mode)
     3: ("Project 3", "pro_3.py", []),
     4: ("Project 4", "pro_4.py", []),
     5: ("Project 5", "pro_5.py", []),
+    6: ("Project 6", "pro_6.py", []),
+    7: ("Project 7", "pro_7.py", []),
 }
 
 
@@ -35,6 +40,7 @@ def main():
     parser.add_argument("--username", help="use the solar system of this username")
     parser.add_argument("--seed", type=int, help="use this seed directly")
     parser.add_argument("--parts", type=int, nargs="+", default=sorted(PARTS), help="which parts to run")
+    parser.add_argument("--papers", action="store_true", help="compile the papers of these parts afterwards")
     args = parser.parse_args()
 
     env = dict(os.environ)
@@ -57,6 +63,9 @@ def main():
             sys.exit(f"\nPart {part} failed (exit code {result.returncode}); stopping here.")
         print(f"\n#  Part {part} finished in {time.perf_counter() - t0:.0f} s", flush=True)
     print(f"\nAll done: parts {args.parts} for seed {seed} in {time.perf_counter() - start:.0f} s")
+    if args.papers:
+        print("\n" + "#" * 78 + "\n#  PAPERS\n" + "#" * 78, flush=True)
+        subprocess.run([sys.executable, "build_papers.py", "--clean", *map(str, args.parts)], cwd=REPO, check=True)
 
 
 if __name__ == "__main__":

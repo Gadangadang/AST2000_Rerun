@@ -17,3 +17,23 @@ Project 4/reference_library.npz
 Project 4/sky_picture.png
 Project 4/mission_after_orientation.bin
 Project 5/mission_in_orbit.bin
+Project 5/journey_state.json
+# Papers: the .tex sources are tracked; numbers, PDFs and LaTeX's own files are regenerated
+Project */paper/results.tex
+Project */paper/results.json
+Project */paper/*.pdf
+Project */paper/*.aux
+Project */paper/*.bbl
+Project */paper/*.blg
+Project */paper/*.fdb_latexmk
+Project */paper/*.fls
+Project */paper/*.log
+Project */paper/*.out
+Project */paper/*Notes.bib
+# Part 6 course data (large; download from the semester page) and our binary cache of it
+Project 6/spectrum_seed*.txt*
+Project 6/sigma_noise.txt*
+Project 6/spectra/
+Project 6/spectral_result.json
+Project 6/atmosphere_model.json
+Project 6/landing_site.json
